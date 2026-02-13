@@ -41,6 +41,28 @@ async function hashPassword(password) {
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+// window.storage 없으면 localStorage로 자동 폴백
+async function storageGet(key) {
+  try {
+    if (window.storage) {
+      const result = await window.storage.get(key);
+      return result && result.value ? result.value : null;
+    }
+  } catch {}
+  try { return localStorage.getItem(key); } catch {}
+  return null;
+}
+
+async function storageSet(key, value) {
+  try {
+    if (window.storage) {
+      await window.storage.set(key, value);
+      return;
+    }
+  } catch {}
+  try { localStorage.setItem(key, value); } catch {}
+}
+
 export default function App() {
   const [entries, setEntries] = useState([]);
   const [view, setView] = useState("list");
@@ -75,9 +97,9 @@ export default function App() {
     async function init() {
       setLoading(true);
       try {
-        const authResult = await window.storage.get(AUTH_KEY).catch(() => null);
-        if (authResult && authResult.value) {
-          const hash = authResult.value;
+        const authHash = await storageGet(AUTH_KEY);
+        if (authHash) {
+          const hash = authHash;
           setPasswordHash(hash);
           const session = sessionStorage.getItem(SESSION_KEY);
           if (session === hash) {
@@ -88,9 +110,9 @@ export default function App() {
         } else {
           setAuthView("setup");
         }
-        const result = await window.storage.get(STORAGE_KEY).catch(() => null);
-        if (result && result.value) {
-          setEntries(JSON.parse(result.value));
+        const entriesData = await storageGet(STORAGE_KEY);
+        if (entriesData) {
+          setEntries(JSON.parse(entriesData));
         }
       } catch {
         setEntries([]);
@@ -103,7 +125,7 @@ export default function App() {
   async function saveEntries(updated) {
     setEntries(updated);
     try {
-      await window.storage.set(STORAGE_KEY, JSON.stringify(updated));
+      await storageSet(STORAGE_KEY, JSON.stringify(updated));
     } catch {
       showToast("저장 중 오류가 발생했습니다.", "error");
     }
@@ -114,7 +136,7 @@ export default function App() {
     if (authInput.length < 4) { setAuthError("비밀번호는 4자 이상이어야 합니다."); return; }
     if (authInput !== authConfirm) { setAuthError("비밀번호가 일치하지 않습니다."); return; }
     const hash = await hashPassword(authInput);
-    await window.storage.set(AUTH_KEY, hash);
+    await storageSet(AUTH_KEY, hash);
     setPasswordHash(hash);
     sessionStorage.setItem(SESSION_KEY, hash);
     setIsAuthenticated(true);
