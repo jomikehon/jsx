@@ -4,5 +4,6 @@ pages_build_output_dir = "dist"
 
 [[d1_databases]]
 binding = "DB" # 코드(Functions)에서 env.DB로 접근할 이름
-database_name = "JSX" # 생성한 D1 데이터베이스 이름
+database_name = "jsx" # 생성한 D1 데이터베이스 이름
 database_id = "f7b8bdd0-2dbc-4f5c-b61d-94636fd4751c"     # Cloudflare 대시보드에서 확인한 ID
+
