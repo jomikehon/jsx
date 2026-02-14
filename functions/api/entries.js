@@ -4,12 +4,18 @@
 export async function onRequestGet(context) {
   const { env } = context;
   try {
-    // 최신순으로 모든 일기 조회
     const { results } = await env.DB.prepare(
       "SELECT id, date, title, content, mood, tags, media, created_at FROM diary_entries ORDER BY date DESC, created_at DESC"
     ).all();
 
-    return new Response(JSON.stringify(results), {
+    // media는 JSON 문자열 -> 파싱, tags는 문자열 그대로
+    const parsed = results.map(item => ({
+      ...item,
+      media: (() => { try { return JSON.parse(item.media || "[]"); } catch { return []; } })(),
+      tags: item.tags || "",
+    }));
+
+    return new Response(JSON.stringify(parsed), {
       headers: { "Content-Type": "application/json" },
     });
   } catch (e) {
@@ -24,28 +30,35 @@ export async function onRequestPost(context) {
     const data = await request.json();
     const { id, date, title, content, mood, tags, media, password_hash } = data;
 
-    // 기존 게시글이 있는지 확인
+    if (!id || !title || !content || !password_hash) {
+      return new Response(JSON.stringify({ error: "필수 항목이 누락되었습니다." }), { status: 400 });
+    }
+
+    // tags는 문자열로, media는 JSON 직렬화
+    const tagsStr = Array.isArray(tags) ? tags.join(",") : (tags || "");
+    const mediaJson = JSON.stringify(Array.isArray(media) ? media : []);
+
+    // 기존 게시글 확인
     const existing = await env.DB.prepare(
       "SELECT password_hash FROM diary_entries WHERE id = ?"
     ).bind(id).first();
 
     if (existing) {
-      // [보안 로직] 본인 확인: DB의 해시와 요청된 해시가 다르면 수정 거부
+      // 본인 확인
       if (existing.password_hash !== password_hash) {
         return new Response(JSON.stringify({ error: "수정 권한이 없습니다." }), { status: 403 });
       }
-
-      // 수정 실행
+      // 수정
       await env.DB.prepare(
         "UPDATE diary_entries SET title=?, content=?, mood=?, tags=?, media=?, updated_at=CURRENT_TIMESTAMP WHERE id=?"
-      ).bind(title, content, mood, JSON.stringify(tags), JSON.stringify(media), id).run();
-      
+      ).bind(title, content, mood, tagsStr, mediaJson, id).run();
+
       return new Response(JSON.stringify({ success: true, message: "수정되었습니다." }));
     } else {
-      // 새 글 작성 실행
+      // 신규 작성
       await env.DB.prepare(
         "INSERT INTO diary_entries (id, date, title, content, mood, tags, media, password_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-      ).bind(id, date, title, content, mood, JSON.stringify(tags), JSON.stringify(media), password_hash).run();
+      ).bind(id, date, title, content, mood, tagsStr, mediaJson, password_hash).run();
 
       return new Response(JSON.stringify({ success: true, message: "저장되었습니다." }), { status: 201 });
     }
