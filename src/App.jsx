@@ -1,40 +1,42 @@
 import { useState, useEffect, useRef } from "react";
 
-// 세션 키
-const SESSION_KEY = "diary-session-hash";
+const SESSION_KEY = "diary-session-token";
+const USERNAME_KEY = "diary-username";
 
-// 유틸리티 함수들
 function formatDate(dateStr) {
   const d = new Date(dateStr + "T00:00:00");
   return d.toLocaleDateString("ko-KR", { year: "numeric", month: "long", day: "numeric", weekday: "long" });
 }
-
 function getTodayStr() { return new Date().toISOString().slice(0, 10); }
-
-function getMoodLabel(mood) {
-  const moods = { "😊": "기쁨", "😢": "슬픔", "😤": "화남", "😌": "평온", "🤩": "설렘", "😴": "피곤" };
-  return moods[mood] || "";
+function getMoodLabel(m) {
+  return { "😊": "기쁨", "😢": "슬픔", "😤": "화남", "😌": "평온", "🤩": "설렘", "😴": "피곤" }[m] || "";
 }
-
 const MOOD_LIST = ["😊", "😌", "🤩", "😢", "😤", "😴"];
 
-async function hashPassword(password) {
-  const msgBuffer = new TextEncoder().encode(password);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", msgBuffer);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
 export default function App() {
+  // ── 인증 상태 ──
+  const [token, setToken] = useState(sessionStorage.getItem(SESSION_KEY) || "");
+  const [username, setUsername] = useState(sessionStorage.getItem(USERNAME_KEY) || "");
+
+  // ── 로그인 폼 ──
+  const [showLogin, setShowLogin] = useState(false);
+  const [loginUser, setLoginUser] = useState("");
+  const [loginPw, setLoginPw] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [loginLoading, setLoginLoading] = useState(false);
+
+  // ── 일기 데이터 ──
   const [entries, setEntries] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // ── 뷰 상태 ──
   const [view, setView] = useState("list");
   const [selected, setSelected] = useState(null);
   const [editMode, setEditMode] = useState(false);
-  const [passwordHash, setPasswordHash] = useState(sessionStorage.getItem(SESSION_KEY) || "");
-  const [isLoading, setIsLoading] = useState(true);
+
+  // ── UI 상태 ──
   const [toast, setToast] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
-  const [deletePassword, setDeletePassword] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [filterMood, setFilterMood] = useState("");
   const textRef = useRef(null);
@@ -44,6 +46,14 @@ export default function App() {
     setTimeout(() => setToast(null), 3000);
   };
 
+  // ── API 헬퍼: 항상 토큰 헤더 포함 ──
+  function authHeaders() {
+    return {
+      "Content-Type": "application/json",
+      ...(token ? { "X-Session-Token": token } : {}),
+    };
+  }
+
   useEffect(() => { fetchEntries(); }, []);
 
   async function fetchEntries() {
@@ -52,14 +62,11 @@ export default function App() {
       const res = await fetch("/api/entries");
       if (res.ok) {
         const data = await res.json();
-        const parsed = data.map(item => ({
+        setEntries(data.map(item => ({
           ...item,
-          tags: typeof item.tags === "string" ? (item.tags || "") : (item.tags || ""),
+          tags: item.tags || "",
           media: typeof item.media === "string" ? JSON.parse(item.media || "[]") : (item.media || []),
-        }));
-        setEntries(parsed);
-      } else {
-        showToast("데이터 로드 실패", "error");
+        })));
       }
     } catch {
       showToast("서버에 연결할 수 없습니다.", "error");
@@ -68,90 +75,113 @@ export default function App() {
     }
   }
 
-  const handleSave = async (formData) => {
-    if (!passwordHash) {
-      const pw = prompt("비밀번호를 입력하세요");
-      if (!pw) return;
-      const hash = await hashPassword(pw);
-      setPasswordHash(hash);
-      sessionStorage.setItem(SESSION_KEY, hash);
-      showToast("인증되었습니다.");
-      // 인증 후 다시 저장 시도
-      const payload = {
-        ...formData,
-        tags: formData.tags || "",
-        media: formData.media || [],
-        password_hash: hash,
-      };
-      await _doSave(payload);
-      return;
+  // ── 로그인 ──
+  async function handleLogin(e) {
+    e?.preventDefault();
+    setLoginError("");
+    setLoginLoading(true);
+    try {
+      const res = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: loginUser, password: loginPw }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setToken(data.token);
+        setUsername(data.username);
+        sessionStorage.setItem(SESSION_KEY, data.token);
+        sessionStorage.setItem(USERNAME_KEY, data.username);
+        setShowLogin(false);
+        setLoginUser("");
+        setLoginPw("");
+        showToast(`${data.username}님, 환영합니다! 🌿`);
+      } else {
+        setLoginError(data.error || "로그인 실패");
+      }
+    } catch {
+      setLoginError("서버 오류가 발생했습니다.");
+    } finally {
+      setLoginLoading(false);
     }
-    const payload = {
-      ...formData,
-      tags: formData.tags || "",
-      media: formData.media || [],
-      password_hash: passwordHash,
-    };
-    await _doSave(payload);
-  };
+  }
 
-  async function _doSave(payload) {
+  // ── 로그아웃 ──
+  async function handleLogout() {
+    if (token) {
+      await fetch("/api/logout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      }).catch(() => {});
+    }
+    setToken("");
+    setUsername("");
+    sessionStorage.removeItem(SESSION_KEY);
+    sessionStorage.removeItem(USERNAME_KEY);
+    setView("list");
+    setSelected(null);
+    showToast("로그아웃되었습니다.");
+  }
+
+  // ── 일기 저장/수정 ──
+  const handleSave = async (formData) => {
+    if (!token) { setShowLogin(true); return; }
     try {
       const res = await fetch("/api/entries", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        headers: authHeaders(),
+        body: JSON.stringify({
+          ...formData,
+          tags: formData.tags || "",
+          media: formData.media || [],
+        }),
       });
+      const data = await res.json();
       if (res.ok) {
         showToast(editMode ? "수정되었습니다. ✏️" : "저장되었습니다. 🌿");
         await fetchEntries();
         setView("list");
         setSelected(null);
         setEditMode(false);
+      } else if (res.status === 401) {
+        // 세션 만료
+        setToken(""); setUsername("");
+        sessionStorage.removeItem(SESSION_KEY);
+        sessionStorage.removeItem(USERNAME_KEY);
+        setShowLogin(true);
+        showToast("세션이 만료되었습니다. 다시 로그인해주세요.", "error");
       } else {
-        const errData = await res.json().catch(() => ({}));
-        showToast(errData.error || "저장에 실패했습니다.", "error");
+        showToast(data.error || "저장에 실패했습니다.", "error");
       }
     } catch {
       showToast("서버 오류가 발생했습니다.", "error");
     }
-  }
-
-  const handleSetAuth = async (rawPw) => {
-    const hash = await hashPassword(rawPw);
-    setPasswordHash(hash);
-    sessionStorage.setItem(SESSION_KEY, hash);
-    showToast("인증되었습니다.");
   };
 
-  const handleDelete = async (entry, pwToUse) => {
+  // ── 일기 삭제 ──
+  const handleDelete = async (entry) => {
     setDeleteConfirm(null);
-    setDeletePassword("");
-
-    // 사용할 해시: 파라미터로 받은 것 > 세션에 있는 것
-    let hashToUse = pwToUse;
-    if (!hashToUse) {
-      hashToUse = passwordHash;
-    }
-    if (!hashToUse) {
-      showToast("비밀번호가 없습니다. 다시 로그인해주세요.", "error");
-      return;
-    }
-
     try {
       const res = await fetch("/api/delete", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: entry.id, password_hash: hashToUse }),
+        headers: authHeaders(),
+        body: JSON.stringify({ id: entry.id }),
       });
+      const data = await res.json();
       if (res.ok) {
         showToast("삭제되었습니다.");
         await fetchEntries();
         setView("list");
         setSelected(null);
+      } else if (res.status === 401) {
+        setToken(""); setUsername("");
+        sessionStorage.removeItem(SESSION_KEY);
+        sessionStorage.removeItem(USERNAME_KEY);
+        setShowLogin(true);
+        showToast("세션이 만료되었습니다. 다시 로그인해주세요.", "error");
       } else {
-        const errData = await res.json().catch(() => ({}));
-        showToast(errData.error || "삭제 권한이 없습니다.", "error");
+        showToast(data.error || "삭제 권한이 없습니다.", "error");
       }
     } catch {
       showToast("삭제 오류가 발생했습니다.", "error");
@@ -159,35 +189,25 @@ export default function App() {
   };
 
   function openWrite(entry = null) {
-    if (entry) {
-      setSelected(entry);
-      setEditMode(true);
-    } else {
-      setSelected(null);
-      setEditMode(false);
-    }
+    if (!token) { setShowLogin(true); return; }
+    setSelected(entry || null);
+    setEditMode(!!entry);
     setView("write");
     setTimeout(() => textRef.current?.focus(), 100);
   }
 
-  function openRead(entry) {
-    setSelected(entry);
-    setView("read");
-  }
+  function openRead(entry) { setSelected(entry); setView("read"); }
 
+  // ── 필터링 ──
   const filtered = entries.filter(e => {
-    const matchSearch = !searchQuery ||
-      e.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      e.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (e.tags || "").toLowerCase().includes(searchQuery.toLowerCase());
-    const matchMood = !filterMood || e.mood === filterMood;
-    return matchSearch && matchMood;
+    const q = searchQuery.toLowerCase();
+    return (!q || e.title.toLowerCase().includes(q) || e.content.toLowerCase().includes(q) || e.tags.toLowerCase().includes(q))
+      && (!filterMood || e.mood === filterMood);
   });
 
   const grouped = filtered.reduce((acc, e) => {
-    const month = e.date.slice(0, 7);
-    if (!acc[month]) acc[month] = [];
-    acc[month].push(e);
+    const m = e.date.slice(0, 7);
+    (acc[m] = acc[m] || []).push(e);
     return acc;
   }, {});
 
@@ -195,7 +215,7 @@ export default function App() {
     return (
       <div style={s.root}>
         <div style={s.loadingWrap}>
-          <div style={s.loadingSpinner} />
+          <div style={s.spinner} />
           <p style={s.loadingText}>불러오는 중...</p>
         </div>
       </div>
@@ -206,106 +226,102 @@ export default function App() {
     <div style={s.root}>
       <div style={s.bgTexture} />
 
+      {/* ── Toast ── */}
       {toast && (
         <div style={{ ...s.toast, background: toast.type === "error" ? "#c0392b" : "#2d6a4f" }}>
           {toast.msg}
         </div>
       )}
 
-      {deleteConfirm && (
+      {/* ── 로그인 모달 ── */}
+      {showLogin && (
         <div style={s.overlay}>
           <div style={s.modal}>
-            <p style={s.modalTitle}>정말 삭제할까요?</p>
-            <p style={s.modalSub}>「{deleteConfirm.title}」을 삭제하면 되돌릴 수 없습니다.</p>
+            <div style={s.modalIcon}>🌿</div>
+            <h2 style={s.modalTitle}>로그인</h2>
+            <p style={s.modalSub}>등록된 계정으로 로그인하세요.</p>
             <input
-              type="password"
-              placeholder="비밀번호 확인"
-              value={deletePassword}
-              onChange={e => setDeletePassword(e.target.value)}
-              onKeyDown={async e => {
-                if (e.key === "Enter" && deletePassword) {
-                  const hash = await hashPassword(deletePassword);
-                  handleDelete(deleteConfirm, hash);
-                }
-              }}
-              style={s.modalPwInput}
+              style={s.modalInput}
+              placeholder="아이디"
+              value={loginUser}
+              onChange={e => setLoginUser(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handleLogin()}
               autoFocus
             />
+            <input
+              style={{ ...s.modalInput, marginTop: 10 }}
+              type="password"
+              placeholder="비밀번호"
+              value={loginPw}
+              onChange={e => setLoginPw(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handleLogin()}
+            />
+            {loginError && <p style={s.errorText}>{loginError}</p>}
             <div style={s.modalActions}>
-              <button style={s.btnGhost} onClick={() => { setDeleteConfirm(null); setDeletePassword(""); }}>취소</button>
-              <button
-                style={{ ...s.btnDanger, opacity: deletePassword ? 1 : 0.5 }}
-                onClick={async () => {
-                  if (!deletePassword) return;
-                  const hash = await hashPassword(deletePassword);
-                  handleDelete(deleteConfirm, hash);
-                }}
-              >삭제</button>
+              <button style={s.btnGhost} onClick={() => { setShowLogin(false); setLoginError(""); }}>취소</button>
+              <button style={s.btnPrimary} onClick={handleLogin} disabled={loginLoading}>
+                {loginLoading ? "확인 중..." : "입장하기"}
+              </button>
             </div>
           </div>
         </div>
       )}
 
+      {/* ── 삭제 확인 모달 ── */}
+      {deleteConfirm && (
+        <div style={s.overlay}>
+          <div style={s.modal}>
+            <p style={s.modalTitle}>정말 삭제할까요?</p>
+            <p style={s.modalSub}>「{deleteConfirm.title}」을 삭제하면 되돌릴 수 없습니다.</p>
+            <div style={s.modalActions}>
+              <button style={s.btnGhost} onClick={() => setDeleteConfirm(null)}>취소</button>
+              <button style={s.btnDanger} onClick={() => handleDelete(deleteConfirm)}>삭제</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Header ── */}
       <header style={s.header}>
         <div style={s.headerInner}>
           <div style={s.logo} onClick={() => { setView("list"); setSelected(null); }}>
-            <span style={s.logoLeaf}>🌿</span>
+            <span>🌿</span>
             <span style={s.logoText}>나의 하루 일기</span>
           </div>
           <div style={s.headerRight}>
-            {view !== "list" && (
-              <button style={s.btnBack} onClick={() => setView("list")}>← 목록</button>
-            )}
-            {view === "list" && (
-              <button style={s.btnPrimary} onClick={() => openWrite()}>+ 새 일기</button>
-            )}
-            {view === "read" && selected && !!passwordHash && (
+            {view !== "list" && <button style={s.btnBack} onClick={() => setView("list")}>← 목록</button>}
+            {view === "list" && <button style={s.btnPrimary} onClick={() => openWrite()}>+ 새 일기</button>}
+            {view === "read" && selected && token && (
               <>
                 <button style={s.btnSecondary} onClick={() => openWrite(selected)}>✏️ 수정</button>
                 <button style={s.btnDanger2} onClick={() => setDeleteConfirm(selected)}>🗑️ 삭제</button>
               </>
             )}
-            {!passwordHash ? (
-              <button style={s.authBtn} onClick={() => {
-                const pw = prompt("비밀번호 입력");
-                if (pw) handleSetAuth(pw);
-              }}>로그인</button>
+            {token ? (
+              <div style={s.userBadge}>
+                <span style={s.userName}>{username}</span>
+                <button style={s.authBtn} onClick={handleLogout}>로그아웃</button>
+              </div>
             ) : (
-              <button style={s.authBtn} onClick={() => {
-                setPasswordHash("");
-                sessionStorage.removeItem(SESSION_KEY);
-                showToast("로그아웃되었습니다.");
-              }}>로그아웃</button>
+              <button style={s.authBtn} onClick={() => setShowLogin(true)}>로그인</button>
             )}
           </div>
         </div>
       </header>
 
+      {/* ── Main ── */}
       <main style={s.main}>
-        {view === "list" && (
-          <div style={s.listContainer}>
-            <div style={s.statsRow}>
-              <div style={s.statCard}>
-                <span style={s.statNum}>{entries.length}</span>
-                <span style={s.statLabel}>총 일기</span>
-              </div>
-              <div style={s.statCard}>
-                <span style={s.statNum}>{entries.filter(e => e.date === getTodayStr()).length > 0 ? "✓" : "○"}</span>
-                <span style={s.statLabel}>오늘 기록</span>
-              </div>
-              <div style={s.statCard}>
-                <span style={s.statNum}>{[...new Set(entries.map(e => e.date.slice(0, 7)))].length}</span>
-                <span style={s.statLabel}>달 수</span>
-              </div>
-            </div>
 
+        {/* LIST */}
+        {view === "list" && (
+          <div>
+            <div style={s.statsRow}>
+              <div style={s.statCard}><span style={s.statNum}>{entries.length}</span><span style={s.statLabel}>총 일기</span></div>
+              <div style={s.statCard}><span style={s.statNum}>{entries.filter(e => e.date === getTodayStr()).length > 0 ? "✓" : "○"}</span><span style={s.statLabel}>오늘 기록</span></div>
+              <div style={s.statCard}><span style={s.statNum}>{[...new Set(entries.map(e => e.date.slice(0, 7)))].length}</span><span style={s.statLabel}>달 수</span></div>
+            </div>
             <div style={s.searchRow}>
-              <input
-                style={s.searchInput}
-                placeholder="🔍  제목, 내용, 태그 검색..."
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-              />
+              <input style={s.searchInput} placeholder="🔍  제목, 내용, 태그 검색..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
               <div style={s.moodFilter}>
                 <button style={{ ...s.moodBtn, ...(filterMood === "" ? s.moodBtnActive : {}) }} onClick={() => setFilterMood("")}>전체</button>
                 {MOOD_LIST.map(m => (
@@ -313,11 +329,12 @@ export default function App() {
                 ))}
               </div>
             </div>
-
             {filtered.length === 0 ? (
               <div style={s.empty}>
-                <div style={s.emptyIcon}>📖</div>
-                <p style={s.emptyTitle}>{entries.length === 0 ? "첫 일기를 써보세요" : "검색 결과가 없어요"}</p>
+                <div style={{ fontSize: 56 }}>📖</div>
+                <p style={{ fontSize: 18, color: p.inkLight, fontFamily: "sans-serif" }}>
+                  {entries.length === 0 ? "첫 일기를 써보세요" : "검색 결과가 없어요"}
+                </p>
                 {entries.length === 0 && <button style={s.btnPrimary} onClick={() => openWrite()}>오늘 하루 기록하기</button>}
               </div>
             ) : (
@@ -330,24 +347,22 @@ export default function App() {
                   <div style={s.entryGrid}>
                     {items.map(entry => (
                       <div key={entry.id} style={s.card} onClick={() => openRead(entry)}>
-                        {entry.media && entry.media.length > 0 && entry.media[0].type?.startsWith("image/") && (
+                        {entry.media?.length > 0 && entry.media[0].type?.startsWith("image/") && (
                           <div style={s.cardThumb}>
-                            <img src={entry.media[0].data} alt="썸네일" style={s.cardThumbImg} />
+                            <img src={entry.media[0].data} alt="" style={s.cardThumbImg} />
                             {entry.media.length > 1 && <span style={s.cardMediaCount}>+{entry.media.length - 1}</span>}
                           </div>
                         )}
                         <div style={s.cardBody}>
                           <div style={s.cardTop}>
-                            <span style={s.cardMood}>{entry.mood}</span>
+                            <span style={{ fontSize: 20 }}>{entry.mood}</span>
                             <span style={s.cardDate}>{entry.date.slice(5).replace("-", ".")}</span>
                           </div>
                           <h3 style={s.cardTitle}>{entry.title}</h3>
                           <p style={s.cardExcerpt}>{entry.content.slice(0, 80)}{entry.content.length > 80 ? "..." : ""}</p>
                           {entry.tags && (
                             <div style={s.cardTags}>
-                              {entry.tags.split(",").map(t => t.trim()).filter(Boolean).map(t => (
-                                <span key={t} style={s.tag}>#{t}</span>
-                              ))}
+                              {entry.tags.split(",").map(t => t.trim()).filter(Boolean).map(t => <span key={t} style={s.tag}>#{t}</span>)}
                             </div>
                           )}
                         </div>
@@ -360,6 +375,7 @@ export default function App() {
           </div>
         )}
 
+        {/* WRITE */}
         {view === "write" && (
           <WriteView
             textRef={textRef}
@@ -370,64 +386,62 @@ export default function App() {
           />
         )}
 
+        {/* READ */}
         {view === "read" && selected && (
           <div style={s.readContainer}>
             <div style={s.readCard}>
-              <div style={s.readHeader}>
-                <div style={s.readMoodDate}>
-                  <span style={s.readMood}>{selected.mood}</span>
-                  <span style={s.readDateStr}>{formatDate(selected.date)}</span>
+              <div style={{ marginBottom: 24 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+                  <span style={{ fontSize: 32 }}>{selected.mood}</span>
+                  <span style={{ fontSize: 15, color: p.inkLight, fontFamily: "sans-serif", fontWeight: 600 }}>{formatDate(selected.date)}</span>
                 </div>
                 <h1 style={s.readTitle}>{selected.title}</h1>
                 {selected.tags && (
-                  <div style={s.readTags}>
-                    {selected.tags.split(",").map(t => t.trim()).filter(Boolean).map(t => (
-                      <span key={t} style={s.tag}>#{t}</span>
-                    ))}
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+                    {selected.tags.split(",").map(t => t.trim()).filter(Boolean).map(t => <span key={t} style={s.tag}>#{t}</span>)}
                   </div>
                 )}
               </div>
-              <div style={s.readDivider} />
-              {selected.media && selected.media.length > 0 && (
+              <div style={{ height: 1, background: p.border, margin: "24px 0" }} />
+              {selected.media?.length > 0 && (
                 <div style={s.mediaGallery}>
                   {selected.media.map((m, idx) => (
-                    <div key={idx} style={s.mediaGalleryItem}>
+                    <div key={idx} style={{ borderRadius: 12, overflow: "hidden", border: `1px solid ${p.border}` }}>
                       {m.type?.startsWith("image/") ? (
-                        <img src={m.data} alt={m.name} style={s.mediaGalleryImg} onClick={() => window.open(m.data, "_blank")} />
+                        <img src={m.data} alt={m.name} style={{ width: "100%", maxHeight: 320, objectFit: "cover", display: "block", cursor: "pointer" }} onClick={() => window.open(m.data, "_blank")} />
                       ) : (
-                        <video src={m.data} style={s.mediaGalleryImg} controls playsInline />
+                        <video src={m.data} style={{ width: "100%", maxHeight: 320 }} controls playsInline />
                       )}
                     </div>
                   ))}
                 </div>
               )}
-              <div style={s.readContent}>
+              <div>
                 {selected.content.split("\n").map((line, i) => (
-                  <p key={i} style={s.readPara}>{line || <br />}</p>
+                  <p key={i} style={{ fontSize: 16, lineHeight: 1.9, margin: "0 0 12px", color: p.ink }}>{line || <br />}</p>
                 ))}
               </div>
             </div>
-            <div style={s.readNav}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
               {(() => {
                 const idx = entries.findIndex(e => e.id === selected.id);
-                const prev = entries[idx + 1];
-                const next = entries[idx - 1];
-                return (
-                  <>
-                    {prev ? <button style={s.navBtn} onClick={() => openRead(prev)}>← {prev.title.slice(0, 20)}{prev.title.length > 20 ? "..." : ""}</button> : <div />}
-                    {next ? <button style={s.navBtn} onClick={() => openRead(next)}>{next.title.slice(0, 20)}{next.title.length > 20 ? "..." : ""} →</button> : <div />}
-                  </>
-                );
+                const prev = entries[idx + 1], next = entries[idx - 1];
+                return (<>
+                  {prev ? <button style={s.navBtn} onClick={() => openRead(prev)}>← {prev.title.slice(0, 20)}{prev.title.length > 20 ? "..." : ""}</button> : <div />}
+                  {next ? <button style={s.navBtn} onClick={() => openRead(next)}>{next.title.slice(0, 20)}{next.title.length > 20 ? "..." : ""} →</button> : <div />}
+                </>);
               })()}
             </div>
           </div>
         )}
       </main>
+
       <footer style={s.footer}>나의 하루를 기록하는 공간 🌿</footer>
     </div>
   );
 }
 
+// ── WriteView ─────────────────────────────────────────────────────────────────
 function WriteView({ textRef, editData, editMode, onSave, onCancel }) {
   const [form, setForm] = useState({
     date: editData?.date || getTodayStr(),
@@ -437,30 +451,18 @@ function WriteView({ textRef, editData, editMode, onSave, onCancel }) {
     tags: editData?.tags || "",
     media: editData?.media || [],
   });
-  const fileInputRef = useRef(null);
+  const fileRef = useRef(null);
 
-  async function handleMediaChange(e) {
+  async function handleMedia(e) {
     const files = Array.from(e.target.files);
-    const converted = await Promise.all(
-      files.map(file => new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve({ name: file.name, type: file.type, data: reader.result });
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      }))
-    );
+    const converted = await Promise.all(files.map(f => new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res({ name: f.name, type: f.type, data: r.result });
+      r.onerror = rej;
+      r.readAsDataURL(f);
+    })));
     setForm(prev => ({ ...prev, media: [...prev.media, ...converted] }));
     e.target.value = "";
-  }
-
-  function removeMedia(idx) {
-    setForm(prev => ({ ...prev, media: prev.media.filter((_, i) => i !== idx) }));
-  }
-
-  function handleSubmit() {
-    if (!form.title.trim()) { alert("제목을 입력해주세요."); return; }
-    if (!form.content.trim()) { alert("내용을 입력해주세요."); return; }
-    onSave({ id: editData?.id || crypto.randomUUID(), ...form });
   }
 
   return (
@@ -468,164 +470,138 @@ function WriteView({ textRef, editData, editMode, onSave, onCancel }) {
       <h2 style={s.writeHeading}>{editMode ? "일기 수정" : "새 일기 쓰기"}</h2>
       <div style={s.writeForm}>
         <div style={s.formRow}>
-          <div style={s.formGroup}>
+          <div style={{ flex: 1, minWidth: 200 }}>
             <label style={s.label}>날짜</label>
             <input type="date" style={s.inputDate} value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} />
           </div>
-          <div style={s.formGroup}>
+          <div style={{ flex: 1, minWidth: 200 }}>
             <label style={s.label}>오늘의 기분</label>
-            <div style={s.moodPicker}>
+            <div style={{ display: "flex", gap: 6 }}>
               {MOOD_LIST.map(m => (
-                <button key={m} title={getMoodLabel(m)} style={{ ...s.moodPickBtn, ...(form.mood === m ? s.moodPickBtnActive : {}) }} onClick={() => setForm({ ...form, mood: m })}>{m}</button>
+                <button key={m} title={getMoodLabel(m)}
+                  style={{ fontSize: 22, background: "transparent", border: `2px solid ${form.mood === m ? p.accent : "transparent"}`, borderRadius: 10, padding: "4px 6px", cursor: "pointer", background: form.mood === m ? p.accentLight : "transparent" }}
+                  onClick={() => setForm({ ...form, mood: m })}>{m}</button>
               ))}
             </div>
           </div>
         </div>
-
-        <div style={s.formGroup}>
+        <div style={{ marginBottom: 20 }}>
           <label style={s.label}>제목</label>
           <input style={s.inputText} placeholder="오늘 하루를 한 줄로..." value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} />
         </div>
-
-        <div style={s.formGroup}>
+        <div style={{ marginBottom: 20 }}>
           <label style={s.label}>내용</label>
-          <textarea ref={textRef} style={s.textarea} placeholder="오늘 있었던 일, 느꼈던 감정, 생각들을 자유롭게 적어보세요..." value={form.content} onChange={e => setForm({ ...form, content: e.target.value })} rows={14} />
-          <div style={s.charCount}>{form.content.length}자</div>
+          <textarea ref={textRef} style={s.textarea} placeholder="오늘 있었던 일, 느꼈던 감정을 자유롭게 적어보세요..." value={form.content} onChange={e => setForm({ ...form, content: e.target.value })} rows={14} />
+          <div style={{ textAlign: "right", fontSize: 12, color: p.inkMuted, marginTop: 4, fontFamily: "sans-serif" }}>{form.content.length}자</div>
         </div>
-
-        <div style={s.formGroup}>
-          <label style={s.label}>사진 / 동영상 <span style={s.labelSub}>(여러 개 첨부 가능)</span></label>
-          <input ref={fileInputRef} type="file" accept="image/*,video/*" multiple style={{ display: "none" }} onChange={handleMediaChange} />
-          <button style={s.mediaUploadBtn} onClick={() => fileInputRef.current?.click()}>📎 파일 추가하기</button>
+        <div style={{ marginBottom: 20 }}>
+          <label style={s.label}>사진 / 동영상 <span style={{ fontWeight: 400, color: p.inkMuted }}>(여러 개 가능)</span></label>
+          <input ref={fileRef} type="file" accept="image/*,video/*" multiple style={{ display: "none" }} onChange={handleMedia} />
+          <button style={s.mediaUploadBtn} onClick={() => fileRef.current?.click()}>📎 파일 추가하기</button>
           {form.media.length > 0 && (
-            <div style={s.mediaPreviewGrid}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 14 }}>
               {form.media.map((m, idx) => (
-                <div key={idx} style={s.mediaPreviewItem}>
-                  {m.type?.startsWith("image/") ? (
-                    <img src={m.data} alt={m.name} style={s.mediaPreviewImg} />
-                  ) : (
-                    <video src={m.data} style={s.mediaPreviewImg} controls />
-                  )}
-                  <button style={s.mediaRemoveBtn} onClick={() => removeMedia(idx)}>✕</button>
-                  <span style={s.mediaFileName}>{m.type?.startsWith("image/") ? "🖼" : "🎬"} {m.name.slice(0, 14)}</span>
+                <div key={idx} style={{ position: "relative", width: 100, borderRadius: 10, overflow: "hidden", border: `1px solid ${p.border}` }}>
+                  {m.type?.startsWith("image/") ? <img src={m.data} style={{ width: 100, height: 80, objectFit: "cover", display: "block" }} /> : <video src={m.data} style={{ width: 100, height: 80, objectFit: "cover" }} />}
+                  <button onClick={() => setForm(prev => ({ ...prev, media: prev.media.filter((_, i) => i !== idx) }))}
+                    style={{ position: "absolute", top: 4, right: 4, background: "rgba(0,0,0,0.55)", color: "#fff", border: "none", borderRadius: "50%", width: 20, height: 20, fontSize: 10, cursor: "pointer" }}>✕</button>
                 </div>
               ))}
             </div>
           )}
         </div>
-
-        <div style={s.formGroup}>
-          <label style={s.label}>태그 <span style={s.labelSub}>(쉼표로 구분)</span></label>
+        <div style={{ marginBottom: 20 }}>
+          <label style={s.label}>태그 <span style={{ fontWeight: 400, color: p.inkMuted }}>(쉼표로 구분)</span></label>
           <input style={s.inputText} placeholder="여행, 일상, 감사..." value={form.tags} onChange={e => setForm({ ...form, tags: e.target.value })} />
         </div>
-
-        <div style={s.formActions}>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
           <button style={s.btnGhost} onClick={onCancel}>취소</button>
-          <button style={s.btnSave} onClick={handleSubmit}>{editMode ? "수정 완료" : "저장하기"}</button>
+          <button style={s.btnSave} onClick={() => {
+            if (!form.title.trim()) { alert("제목을 입력해주세요."); return; }
+            if (!form.content.trim()) { alert("내용을 입력해주세요."); return; }
+            onSave({ id: editData?.id || crypto.randomUUID(), ...form });
+          }}>{editMode ? "수정 완료" : "저장하기"}</button>
         </div>
       </div>
     </div>
   );
 }
 
-const palette = {
+// ── 스타일 ─────────────────────────────────────────────────────────────────────
+const p = {
   bg: "#faf8f3", surface: "#ffffff", ink: "#2c2c2c", inkLight: "#6b6b6b",
   inkMuted: "#9b9b9b", accent: "#3d6b47", accentLight: "#e8f0ea",
   accentSoft: "#c4dbc9", border: "#e4dfd6", danger: "#c0392b", dangerLight: "#fdecea",
 };
 
 const s = {
-  root: { minHeight: "100vh", background: palette.bg, fontFamily: "'Noto Serif KR', 'Georgia', serif", color: palette.ink, position: "relative", overflowX: "hidden" },
+  root: { minHeight: "100vh", background: p.bg, fontFamily: "'Noto Serif KR', Georgia, serif", color: p.ink, position: "relative", overflowX: "hidden" },
   bgTexture: { position: "fixed", inset: 0, backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23c8bfad' fill-opacity='0.08'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C%2Fg%3E%3C%2Fg%3E%3C%2Fsvg%3E")`, pointerEvents: "none", zIndex: 0 },
   loadingWrap: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "100vh", gap: 16 },
-  loadingSpinner: { width: 40, height: 40, border: "3px solid #e4dfd6", borderTop: "3px solid #3d6b47", borderRadius: "50%", animation: "spin 0.9s linear infinite" },
-  loadingText: { color: "#9b9b9b", fontSize: 14, fontFamily: "sans-serif" },
-  toast: { position: "fixed", top: 20, left: "50%", transform: "translateX(-50%)", color: "#fff", padding: "10px 24px", borderRadius: 30, fontSize: 14, fontWeight: 600, zIndex: 9999, boxShadow: "0 4px 20px rgba(0,0,0,0.15)", fontFamily: "sans-serif" },
+  spinner: { width: 40, height: 40, border: "3px solid #e4dfd6", borderTop: "3px solid #3d6b47", borderRadius: "50%", animation: "spin 0.9s linear infinite" },
+  loadingText: { color: p.inkMuted, fontSize: 14, fontFamily: "sans-serif" },
+  toast: { position: "fixed", top: 20, left: "50%", transform: "translateX(-50%)", color: "#fff", padding: "10px 24px", borderRadius: 30, fontSize: 14, fontWeight: 600, zIndex: 9999, boxShadow: "0 4px 20px rgba(0,0,0,0.15)", fontFamily: "sans-serif", whiteSpace: "nowrap" },
   overlay: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center" },
-  modal: { background: palette.surface, borderRadius: 16, padding: "32px 36px", maxWidth: 360, width: "90%", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" },
-  modalTitle: { fontSize: 20, fontWeight: 700, margin: "0 0 8px", color: palette.ink },
-  modalSub: { fontSize: 14, color: palette.inkLight, margin: "0 0 24px", lineHeight: 1.6 },
-  modalPwInput: { width: "100%", padding: "10px 14px", border: `1.5px solid ${palette.border}`, borderRadius: 10, fontSize: 14, background: palette.bg, color: palette.ink, outline: "none", fontFamily: "sans-serif", boxSizing: "border-box", marginBottom: 16 },
-  modalActions: { display: "flex", gap: 12, justifyContent: "flex-end" },
-  header: { position: "sticky", top: 0, zIndex: 100, background: "rgba(250,248,243,0.92)", backdropFilter: "blur(12px)", borderBottom: `1px solid ${palette.border}` },
+  modal: { background: p.surface, borderRadius: 20, padding: "36px 40px", maxWidth: 380, width: "90%", boxShadow: "0 20px 60px rgba(0,0,0,0.2)", display: "flex", flexDirection: "column", alignItems: "stretch" },
+  modalIcon: { fontSize: 40, textAlign: "center", marginBottom: 12 },
+  modalTitle: { fontSize: 20, fontWeight: 700, margin: "0 0 6px", color: p.ink, textAlign: "center" },
+  modalSub: { fontSize: 14, color: p.inkLight, margin: "0 0 20px", lineHeight: 1.6, textAlign: "center", fontFamily: "sans-serif" },
+  modalInput: { width: "100%", padding: "12px 14px", border: `1.5px solid ${p.border}`, borderRadius: 10, fontSize: 14, background: p.bg, color: p.ink, outline: "none", fontFamily: "sans-serif", boxSizing: "border-box" },
+  modalActions: { display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 },
+  errorText: { color: p.danger, fontSize: 13, margin: "8px 0 0", fontFamily: "sans-serif", textAlign: "center" },
+  header: { position: "sticky", top: 0, zIndex: 100, background: "rgba(250,248,243,0.92)", backdropFilter: "blur(12px)", borderBottom: `1px solid ${p.border}` },
   headerInner: { maxWidth: 860, margin: "0 auto", padding: "0 24px", height: 60, display: "flex", alignItems: "center", justifyContent: "space-between" },
-  logo: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", userSelect: "none" },
-  logoLeaf: { fontSize: 22 },
-  logoText: { fontSize: 18, fontWeight: 700, color: palette.accent, letterSpacing: -0.3 },
+  logo: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", userSelect: "none", fontSize: 22 },
+  logoText: { fontSize: 18, fontWeight: 700, color: p.accent, letterSpacing: -0.3 },
   headerRight: { display: "flex", gap: 8, alignItems: "center" },
-  btnPrimary: { background: palette.accent, color: "#fff", border: "none", borderRadius: 24, padding: "8px 18px", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" },
-  btnSecondary: { background: palette.accentLight, color: palette.accent, border: "none", borderRadius: 24, padding: "8px 16px", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" },
-  btnDanger2: { background: palette.dangerLight, color: palette.danger, border: "none", borderRadius: 24, padding: "8px 16px", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" },
-  btnGhost: { background: "transparent", color: palette.inkLight, border: `1px solid ${palette.border}`, borderRadius: 24, padding: "8px 18px", fontSize: 14, cursor: "pointer", fontFamily: "inherit" },
-  btnDanger: { background: palette.danger, color: "#fff", border: "none", borderRadius: 24, padding: "8px 18px", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" },
-  btnSave: { background: palette.accent, color: "#fff", border: "none", borderRadius: 24, padding: "12px 32px", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", letterSpacing: 0.3 },
-  btnBack: { background: "transparent", color: palette.inkLight, border: "none", padding: "6px 12px", fontSize: 14, cursor: "pointer", fontFamily: "inherit" },
-  authBtn: { background: "transparent", color: palette.inkLight, border: `1px solid ${palette.border}`, borderRadius: 24, padding: "6px 14px", fontSize: 13, cursor: "pointer", fontFamily: "inherit" },
-  main: { position: "relative", zIndex: 1, maxWidth: 860, margin: "0 auto", padding: "32px 24px 80px", minHeight: "calc(100vh - 120px)" },
-  listContainer: { maxWidth: 860 },
+  userBadge: { display: "flex", alignItems: "center", gap: 8 },
+  userName: { fontSize: 13, color: p.accent, fontWeight: 700, fontFamily: "sans-serif" },
+  btnPrimary: { background: p.accent, color: "#fff", border: "none", borderRadius: 24, padding: "8px 18px", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" },
+  btnSecondary: { background: p.accentLight, color: p.accent, border: "none", borderRadius: 24, padding: "8px 16px", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" },
+  btnDanger2: { background: p.dangerLight, color: p.danger, border: "none", borderRadius: 24, padding: "8px 16px", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" },
+  btnGhost: { background: "transparent", color: p.inkLight, border: `1px solid ${p.border}`, borderRadius: 24, padding: "8px 18px", fontSize: 14, cursor: "pointer", fontFamily: "inherit" },
+  btnDanger: { background: p.danger, color: "#fff", border: "none", borderRadius: 24, padding: "8px 18px", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" },
+  btnSave: { background: p.accent, color: "#fff", border: "none", borderRadius: 24, padding: "12px 32px", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" },
+  btnBack: { background: "transparent", color: p.inkLight, border: "none", padding: "6px 12px", fontSize: 14, cursor: "pointer", fontFamily: "inherit" },
+  authBtn: { background: "transparent", color: p.inkLight, border: `1px solid ${p.border}`, borderRadius: 24, padding: "6px 14px", fontSize: 13, cursor: "pointer", fontFamily: "inherit" },
+  main: { position: "relative", zIndex: 1, maxWidth: 860, margin: "0 auto", padding: "32px 24px 80px" },
   statsRow: { display: "flex", gap: 16, marginBottom: 28, flexWrap: "wrap" },
-  statCard: { background: palette.surface, border: `1px solid ${palette.border}`, borderRadius: 12, padding: "16px 28px", display: "flex", flexDirection: "column", alignItems: "center", gap: 4, minWidth: 90, boxShadow: "0 2px 8px rgba(0,0,0,0.04)" },
-  statNum: { fontSize: 26, fontWeight: 800, color: palette.accent },
-  statLabel: { fontSize: 12, color: palette.inkMuted, fontFamily: "sans-serif" },
+  statCard: { background: p.surface, border: `1px solid ${p.border}`, borderRadius: 12, padding: "16px 28px", display: "flex", flexDirection: "column", alignItems: "center", gap: 4, minWidth: 90, boxShadow: "0 2px 8px rgba(0,0,0,0.04)" },
+  statNum: { fontSize: 26, fontWeight: 800, color: p.accent },
+  statLabel: { fontSize: 12, color: p.inkMuted, fontFamily: "sans-serif" },
   searchRow: { display: "flex", flexDirection: "column", gap: 12, marginBottom: 32 },
-  searchInput: { width: "100%", padding: "12px 18px", border: `1.5px solid ${palette.border}`, borderRadius: 30, fontSize: 14, background: palette.surface, color: palette.ink, outline: "none", fontFamily: "sans-serif", boxSizing: "border-box" },
+  searchInput: { width: "100%", padding: "12px 18px", border: `1.5px solid ${p.border}`, borderRadius: 30, fontSize: 14, background: p.surface, color: p.ink, outline: "none", fontFamily: "sans-serif", boxSizing: "border-box" },
   moodFilter: { display: "flex", gap: 8, flexWrap: "wrap" },
-  moodBtn: { background: palette.surface, border: `1.5px solid ${palette.border}`, borderRadius: 20, padding: "5px 14px", fontSize: 14, cursor: "pointer", fontFamily: "sans-serif", color: palette.inkLight },
-  moodBtnActive: { background: palette.accentLight, borderColor: palette.accent, color: palette.accent, fontWeight: 600 },
-  monthLabel: { fontSize: 13, fontWeight: 700, color: palette.inkMuted, letterSpacing: 0.5, marginBottom: 12, marginTop: 8, display: "flex", alignItems: "center", gap: 10, fontFamily: "sans-serif" },
-  monthCount: { fontSize: 11, background: palette.accentLight, color: palette.accent, padding: "2px 8px", borderRadius: 10, fontWeight: 700 },
+  moodBtn: { background: p.surface, border: `1.5px solid ${p.border}`, borderRadius: 20, padding: "5px 14px", fontSize: 14, cursor: "pointer", color: p.inkLight, fontFamily: "sans-serif" },
+  moodBtnActive: { background: p.accentLight, borderColor: p.accent, color: p.accent, fontWeight: 600 },
+  monthLabel: { fontSize: 13, fontWeight: 700, color: p.inkMuted, letterSpacing: 0.5, marginBottom: 12, marginTop: 8, display: "flex", alignItems: "center", gap: 10, fontFamily: "sans-serif" },
+  monthCount: { fontSize: 11, background: p.accentLight, color: p.accent, padding: "2px 8px", borderRadius: 10, fontWeight: 700 },
   entryGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 16, marginBottom: 32 },
-  card: { background: palette.surface, border: `1px solid ${palette.border}`, borderRadius: 16, overflow: "hidden", cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.04)" },
+  card: { background: p.surface, border: `1px solid ${p.border}`, borderRadius: 16, overflow: "hidden", cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.04)" },
   cardThumb: { position: "relative", width: "100%", height: 160, overflow: "hidden", background: "#f0ebe4" },
   cardThumbImg: { width: "100%", height: "100%", objectFit: "cover" },
   cardMediaCount: { position: "absolute", bottom: 8, right: 8, background: "rgba(0,0,0,0.6)", color: "#fff", fontSize: 11, padding: "2px 8px", borderRadius: 10, fontFamily: "sans-serif" },
-  cardBody: { padding: "16px" },
+  cardBody: { padding: 16 },
   cardTop: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
-  cardMood: { fontSize: 20 },
-  cardDate: { fontSize: 12, color: palette.inkMuted, fontFamily: "sans-serif", fontWeight: 600 },
-  cardTitle: { fontSize: 16, fontWeight: 700, margin: "0 0 8px", lineHeight: 1.4, color: palette.ink },
-  cardExcerpt: { fontSize: 13, color: palette.inkLight, lineHeight: 1.6, margin: "0 0 10px", fontFamily: "sans-serif" },
+  cardDate: { fontSize: 12, color: p.inkMuted, fontFamily: "sans-serif", fontWeight: 600 },
+  cardTitle: { fontSize: 16, fontWeight: 700, margin: "0 0 8px", lineHeight: 1.4, color: p.ink },
+  cardExcerpt: { fontSize: 13, color: p.inkLight, lineHeight: 1.6, margin: "0 0 10px", fontFamily: "sans-serif" },
   cardTags: { display: "flex", flexWrap: "wrap", gap: 4 },
-  tag: { fontSize: 11, background: palette.accentLight, color: palette.accent, padding: "2px 8px", borderRadius: 10, fontWeight: 600, fontFamily: "sans-serif" },
+  tag: { fontSize: 11, background: p.accentLight, color: p.accent, padding: "2px 8px", borderRadius: 10, fontWeight: 600, fontFamily: "sans-serif" },
   empty: { textAlign: "center", padding: "80px 20px", display: "flex", flexDirection: "column", alignItems: "center", gap: 16 },
-  emptyIcon: { fontSize: 56 },
-  emptyTitle: { fontSize: 18, color: palette.inkLight, fontFamily: "sans-serif" },
   writeContainer: { maxWidth: 680, margin: "0 auto" },
-  writeHeading: { fontSize: 26, fontWeight: 800, marginBottom: 28, color: palette.ink },
-  writeForm: { background: palette.surface, border: `1px solid ${palette.border}`, borderRadius: 20, padding: "32px", boxShadow: "0 4px 20px rgba(0,0,0,0.06)" },
+  writeHeading: { fontSize: 26, fontWeight: 800, marginBottom: 28, color: p.ink },
+  writeForm: { background: p.surface, border: `1px solid ${p.border}`, borderRadius: 20, padding: 32, boxShadow: "0 4px 20px rgba(0,0,0,0.06)" },
   formRow: { display: "flex", gap: 20, marginBottom: 20, flexWrap: "wrap" },
-  formGroup: { marginBottom: 20, flex: 1, minWidth: 200 },
-  label: { display: "block", fontSize: 13, fontWeight: 700, color: palette.inkLight, marginBottom: 8, fontFamily: "sans-serif", letterSpacing: 0.3 },
-  labelSub: { fontWeight: 400, color: palette.inkMuted },
-  inputDate: { width: "100%", padding: "10px 14px", border: `1.5px solid ${palette.border}`, borderRadius: 10, fontSize: 14, background: palette.bg, color: palette.ink, outline: "none", fontFamily: "sans-serif", boxSizing: "border-box" },
-  inputText: { width: "100%", padding: "10px 14px", border: `1.5px solid ${palette.border}`, borderRadius: 10, fontSize: 15, background: palette.bg, color: palette.ink, outline: "none", fontFamily: "inherit", boxSizing: "border-box" },
-  moodPicker: { display: "flex", gap: 6 },
-  moodPickBtn: { fontSize: 22, background: "transparent", border: "2px solid transparent", borderRadius: 10, padding: "4px 6px", cursor: "pointer" },
-  moodPickBtnActive: { background: palette.accentLight, border: `2px solid ${palette.accent}` },
-  textarea: { width: "100%", padding: "14px", border: `1.5px solid ${palette.border}`, borderRadius: 10, fontSize: 15, background: palette.bg, color: palette.ink, outline: "none", fontFamily: "inherit", resize: "vertical", lineHeight: 1.8, boxSizing: "border-box" },
-  charCount: { textAlign: "right", fontSize: 12, color: palette.inkMuted, marginTop: 4, fontFamily: "sans-serif" },
-  mediaUploadBtn: { background: palette.accentLight, color: palette.accent, border: `1.5px dashed ${palette.accentSoft}`, borderRadius: 10, padding: "10px 20px", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "sans-serif" },
-  mediaPreviewGrid: { display: "flex", flexWrap: "wrap", gap: 10, marginTop: 14 },
-  mediaPreviewItem: { position: "relative", width: 100, borderRadius: 10, overflow: "hidden", border: `1px solid ${palette.border}`, background: palette.bg, display: "flex", flexDirection: "column" },
-  mediaPreviewImg: { width: 100, height: 80, objectFit: "cover", display: "block" },
-  mediaRemoveBtn: { position: "absolute", top: 4, right: 4, background: "rgba(0,0,0,0.55)", color: "#fff", border: "none", borderRadius: "50%", width: 20, height: 20, fontSize: 10, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" },
-  mediaFileName: { fontSize: 10, color: palette.inkMuted, padding: "4px 6px", textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap", fontFamily: "sans-serif" },
-  formActions: { display: "flex", justifyContent: "flex-end", gap: 12, marginTop: 8 },
+  label: { display: "block", fontSize: 13, fontWeight: 700, color: p.inkLight, marginBottom: 8, fontFamily: "sans-serif", letterSpacing: 0.3 },
+  inputDate: { width: "100%", padding: "10px 14px", border: `1.5px solid ${p.border}`, borderRadius: 10, fontSize: 14, background: p.bg, color: p.ink, outline: "none", fontFamily: "sans-serif", boxSizing: "border-box" },
+  inputText: { width: "100%", padding: "10px 14px", border: `1.5px solid ${p.border}`, borderRadius: 10, fontSize: 15, background: p.bg, color: p.ink, outline: "none", fontFamily: "inherit", boxSizing: "border-box" },
+  textarea: { width: "100%", padding: 14, border: `1.5px solid ${p.border}`, borderRadius: 10, fontSize: 15, background: p.bg, color: p.ink, outline: "none", fontFamily: "inherit", resize: "vertical", lineHeight: 1.8, boxSizing: "border-box" },
+  mediaUploadBtn: { background: p.accentLight, color: p.accent, border: `1.5px dashed ${p.accentSoft}`, borderRadius: 10, padding: "10px 20px", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "sans-serif" },
   readContainer: { maxWidth: 680, margin: "0 auto" },
-  readCard: { background: palette.surface, border: `1px solid ${palette.border}`, borderRadius: 20, padding: "40px", boxShadow: "0 4px 20px rgba(0,0,0,0.06)", marginBottom: 24 },
-  readHeader: { marginBottom: 24 },
-  readMoodDate: { display: "flex", alignItems: "center", gap: 12, marginBottom: 12 },
-  readMood: { fontSize: 32 },
-  readDateStr: { fontSize: 15, color: palette.inkLight, fontFamily: "sans-serif", fontWeight: 600 },
-  readTitle: { fontSize: 28, fontWeight: 800, margin: "0 0 12px", lineHeight: 1.3, color: palette.ink },
-  readTags: { display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 },
-  readDivider: { height: 1, background: palette.border, margin: "24px 0" },
-  readContent: {},
-  readPara: { fontSize: 16, lineHeight: 1.9, margin: "0 0 12px", color: palette.ink },
-  readNav: { display: "flex", justifyContent: "space-between", gap: 12 },
-  navBtn: { background: palette.surface, border: `1px solid ${palette.border}`, borderRadius: 30, padding: "10px 20px", fontSize: 13, color: palette.inkLight, cursor: "pointer", fontFamily: "sans-serif", maxWidth: "45%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  readCard: { background: p.surface, border: `1px solid ${p.border}`, borderRadius: 20, padding: 40, boxShadow: "0 4px 20px rgba(0,0,0,0.06)", marginBottom: 24 },
+  readTitle: { fontSize: 28, fontWeight: 800, margin: "0 0 12px", lineHeight: 1.3, color: p.ink },
   mediaGallery: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12, marginBottom: 28 },
-  mediaGalleryItem: { borderRadius: 12, overflow: "hidden", border: `1px solid ${palette.border}` },
-  mediaGalleryImg: { width: "100%", maxHeight: 320, objectFit: "cover", display: "block", cursor: "pointer" },
-  footer: { position: "relative", zIndex: 1, textAlign: "center", padding: "20px", fontSize: 13, color: palette.inkMuted, borderTop: `1px solid ${palette.border}`, fontFamily: "sans-serif" },
+  navBtn: { background: p.surface, border: `1px solid ${p.border}`, borderRadius: 30, padding: "10px 20px", fontSize: 13, color: p.inkLight, cursor: "pointer", fontFamily: "sans-serif", maxWidth: "45%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  footer: { position: "relative", zIndex: 1, textAlign: "center", padding: 20, fontSize: 13, color: p.inkMuted, borderTop: `1px solid ${p.border}`, fontFamily: "sans-serif" },
 };
