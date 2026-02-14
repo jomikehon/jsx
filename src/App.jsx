@@ -34,6 +34,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [toast, setToast] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [deletePassword, setDeletePassword] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [filterMood, setFilterMood] = useState("");
   const textRef = useRef(null);
@@ -123,13 +124,25 @@ export default function App() {
     showToast("인증되었습니다.");
   };
 
-  const handleDelete = async (entry) => {
+  const handleDelete = async (entry, pwToUse) => {
     setDeleteConfirm(null);
+    setDeletePassword("");
+
+    // 사용할 해시: 파라미터로 받은 것 > 세션에 있는 것
+    let hashToUse = pwToUse;
+    if (!hashToUse) {
+      hashToUse = passwordHash;
+    }
+    if (!hashToUse) {
+      showToast("비밀번호가 없습니다. 다시 로그인해주세요.", "error");
+      return;
+    }
+
     try {
       const res = await fetch("/api/delete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: entry.id, password_hash: passwordHash }),
+        body: JSON.stringify({ id: entry.id, password_hash: hashToUse }),
       });
       if (res.ok) {
         showToast("삭제되었습니다.");
@@ -137,7 +150,8 @@ export default function App() {
         setView("list");
         setSelected(null);
       } else {
-        showToast("삭제 권한이 없습니다.", "error");
+        const errData = await res.json().catch(() => ({}));
+        showToast(errData.error || "삭제 권한이 없습니다.", "error");
       }
     } catch {
       showToast("삭제 오류가 발생했습니다.", "error");
@@ -203,9 +217,30 @@ export default function App() {
           <div style={s.modal}>
             <p style={s.modalTitle}>정말 삭제할까요?</p>
             <p style={s.modalSub}>「{deleteConfirm.title}」을 삭제하면 되돌릴 수 없습니다.</p>
+            <input
+              type="password"
+              placeholder="비밀번호 확인"
+              value={deletePassword}
+              onChange={e => setDeletePassword(e.target.value)}
+              onKeyDown={async e => {
+                if (e.key === "Enter" && deletePassword) {
+                  const hash = await hashPassword(deletePassword);
+                  handleDelete(deleteConfirm, hash);
+                }
+              }}
+              style={s.modalPwInput}
+              autoFocus
+            />
             <div style={s.modalActions}>
-              <button style={s.btnGhost} onClick={() => setDeleteConfirm(null)}>취소</button>
-              <button style={s.btnDanger} onClick={() => handleDelete(deleteConfirm)}>삭제</button>
+              <button style={s.btnGhost} onClick={() => { setDeleteConfirm(null); setDeletePassword(""); }}>취소</button>
+              <button
+                style={{ ...s.btnDanger, opacity: deletePassword ? 1 : 0.5 }}
+                onClick={async () => {
+                  if (!deletePassword) return;
+                  const hash = await hashPassword(deletePassword);
+                  handleDelete(deleteConfirm, hash);
+                }}
+              >삭제</button>
             </div>
           </div>
         </div>
@@ -510,6 +545,7 @@ const s = {
   modal: { background: palette.surface, borderRadius: 16, padding: "32px 36px", maxWidth: 360, width: "90%", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" },
   modalTitle: { fontSize: 20, fontWeight: 700, margin: "0 0 8px", color: palette.ink },
   modalSub: { fontSize: 14, color: palette.inkLight, margin: "0 0 24px", lineHeight: 1.6 },
+  modalPwInput: { width: "100%", padding: "10px 14px", border: `1.5px solid ${palette.border}`, borderRadius: 10, fontSize: 14, background: palette.bg, color: palette.ink, outline: "none", fontFamily: "sans-serif", boxSizing: "border-box", marginBottom: 16 },
   modalActions: { display: "flex", gap: 12, justifyContent: "flex-end" },
   header: { position: "sticky", top: 0, zIndex: 100, background: "rgba(250,248,243,0.92)", backdropFilter: "blur(12px)", borderBottom: `1px solid ${palette.border}` },
   headerInner: { maxWidth: 860, margin: "0 auto", padding: "0 24px", height: 60, display: "flex", alignItems: "center", justifyContent: "space-between" },
