@@ -39,6 +39,7 @@ export default function App() {
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterMood, setFilterMood] = useState("");
+  const [mediaLoading, setMediaLoading] = useState(false);
   const textRef = useRef(null);
 
   const showToast = (msg, type = "success") => {
@@ -144,7 +145,7 @@ export default function App() {
         headers: authHeaders(),
         body: JSON.stringify({ ...textData, tags: textData.tags || "" }),
       });
-      const data = await res.json();
+      const resData = await res.json();
       if (!res.ok) {
         if (res.status === 401) {
           setToken(""); setUsername("");
@@ -153,7 +154,7 @@ export default function App() {
           setShowLogin(true);
           showToast("세션이 만료되었습니다. 다시 로그인해주세요.", "error");
         } else {
-          showToast(data.error || "저장에 실패했습니다.", "error");
+          showToast(resData.error || "저장에 실패했습니다.", "error");
         }
         return;
       }
@@ -168,27 +169,47 @@ export default function App() {
 
       // 3단계: 미디어를 1개씩 순차 업로드 (절대 묶지 않음 → SQLITE_TOOBIG 방지)
       const mediaList = Array.isArray(media) ? media : [];
+      let mediaError = false;
       for (let i = 0; i < mediaList.length; i++) {
         const m = mediaList[i];
-        await fetch("/api/media", {
-          method: "POST",
-          headers: authHeaders(),
-          body: JSON.stringify({
-            entry_id: formData.id,
-            sort_order: i,
-            name: m.name || "",
-            type: m.type || "",
-            data: m.data,
-          }),
-        });
+        try {
+          const mRes = await fetch("/api/media", {
+            method: "POST",
+            headers: authHeaders(),
+            body: JSON.stringify({
+              entry_id: formData.id,
+              sort_order: i,
+              name: m.name || "",
+              type: m.type || "",
+              data: m.data,
+            }),
+          });
+          if (!mRes.ok) {
+            const mData = await mRes.json();
+            console.error(`미디어 ${i} 업로드 실패:`, mData.error);
+            mediaError = true;
+          }
+        } catch (e) {
+          console.error(`미디어 ${i} 업로드 오류:`, e);
+          mediaError = true;
+        }
       }
 
-      showToast(editMode ? "수정되었습니다. ✏️" : "저장되었습니다. 🌿");
+      if (mediaError) {
+        showToast("일기는 저장됐지만 일부 미디어 업로드에 실패했습니다.", "error");
+      } else {
+        showToast(editMode ? "수정되었습니다. ✏️" : "저장되었습니다. 🌿");
+      }
+      // entries 갱신 후 방금 저장한 항목으로 이동 (미디어 즉시 표시)
       await fetchEntries();
-      setView("list");
-      setSelected(null);
+      const savedId = formData.id;
+      const savedMedia = await fetchMedia(savedId);
+      setSelected({ ...textData, id: savedId, media: savedMedia });
+      setView("read");
       setEditMode(false);
-    } catch {
+      setMediaLoading(false);
+    } catch (e) {
+      console.error("handleSave 오류:", e);
       showToast("서버 오류가 발생했습니다.", "error");
     }
   };
@@ -237,15 +258,14 @@ export default function App() {
   }
 
   async function openRead(entry) {
-    setSelected(entry);
+    setSelected({ ...entry, media: [] });
     setView("read");
-    // 미디어가 아직 없으면 lazy 로드
-    if (!entry.media || entry.media.length === 0) {
+    setMediaLoading(true);
+    try {
       const media = await fetchMedia(entry.id);
-      if (media.length > 0) {
-        setSelected(prev => prev?.id === entry.id ? { ...prev, media } : prev);
-        setEntries(prev => prev.map(e => e.id === entry.id ? { ...e, media } : e));
-      }
+      setSelected(prev => prev?.id === entry.id ? { ...prev, media } : prev);
+    } finally {
+      setMediaLoading(false);
     }
   }
 
@@ -454,7 +474,12 @@ export default function App() {
                 )}
               </div>
               <div style={{ height: 1, background: p.border, margin: "24px 0" }} />
-              {selected.media?.length > 0 && (
+              {mediaLoading && (
+                <div style={{ textAlign: "center", padding: "16px 0", color: p.inkMuted, fontSize: 14, fontFamily: "sans-serif" }}>
+                  🖼️ 미디어 불러오는 중...
+                </div>
+              )}
+              {!mediaLoading && selected.media?.length > 0 && (
                 <div style={s.mediaGallery}>
                   {selected.media.map((m, idx) => (
                     <div key={idx} style={{ borderRadius: 12, overflow: "hidden", border: `1px solid ${p.border}` }}>
