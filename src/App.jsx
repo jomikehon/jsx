@@ -65,7 +65,7 @@ export default function App() {
         setEntries(data.map(item => ({
           ...item,
           tags: item.tags || "",
-          media: typeof item.media === "string" ? JSON.parse(item.media || "[]") : (item.media || []),
+          media: [],  // 미디어는 상세보기 시 lazy 로드
         })));
       }
     } catch {
@@ -73,6 +73,15 @@ export default function App() {
     } finally {
       setIsLoading(false);
     }
+  }
+
+  // 미디어 lazy 로드 — 1개씩 받아온 행을 배열로 조립
+  async function fetchMedia(entryId) {
+    try {
+      const res = await fetch(`/api/media?entry_id=${encodeURIComponent(entryId)}`);
+      if (res.ok) return await res.json();
+    } catch {}
+    return [];
   }
 
   // ── 로그인 ──
@@ -128,32 +137,57 @@ export default function App() {
   const handleSave = async (formData) => {
     if (!token) { setShowLogin(true); return; }
     try {
+      // 1단계: 텍스트 데이터만 저장 (media 제외 → SQLITE_TOOBIG 방지)
+      const { media, ...textData } = formData;
       const res = await fetch("/api/entries", {
         method: "POST",
         headers: authHeaders(),
-        body: JSON.stringify({
-          ...formData,
-          tags: formData.tags || "",
-          media: formData.media || [],
-        }),
+        body: JSON.stringify({ ...textData, tags: textData.tags || "" }),
       });
       const data = await res.json();
-      if (res.ok) {
-        showToast(editMode ? "수정되었습니다. ✏️" : "저장되었습니다. 🌿");
-        await fetchEntries();
-        setView("list");
-        setSelected(null);
-        setEditMode(false);
-      } else if (res.status === 401) {
-        // 세션 만료
-        setToken(""); setUsername("");
-        sessionStorage.removeItem(SESSION_KEY);
-        sessionStorage.removeItem(USERNAME_KEY);
-        setShowLogin(true);
-        showToast("세션이 만료되었습니다. 다시 로그인해주세요.", "error");
-      } else {
-        showToast(data.error || "저장에 실패했습니다.", "error");
+      if (!res.ok) {
+        if (res.status === 401) {
+          setToken(""); setUsername("");
+          sessionStorage.removeItem(SESSION_KEY);
+          sessionStorage.removeItem(USERNAME_KEY);
+          setShowLogin(true);
+          showToast("세션이 만료되었습니다. 다시 로그인해주세요.", "error");
+        } else {
+          showToast(data.error || "저장에 실패했습니다.", "error");
+        }
+        return;
       }
+
+      // 2단계: 기존 미디어 삭제 (수정 시)
+      if (editMode) {
+        await fetch(`/api/media?entry_id=${encodeURIComponent(formData.id)}`, {
+          method: "DELETE",
+          headers: authHeaders(),
+        });
+      }
+
+      // 3단계: 미디어를 1개씩 순차 업로드 (절대 묶지 않음 → SQLITE_TOOBIG 방지)
+      const mediaList = Array.isArray(media) ? media : [];
+      for (let i = 0; i < mediaList.length; i++) {
+        const m = mediaList[i];
+        await fetch("/api/media", {
+          method: "POST",
+          headers: authHeaders(),
+          body: JSON.stringify({
+            entry_id: formData.id,
+            sort_order: i,
+            name: m.name || "",
+            type: m.type || "",
+            data: m.data,
+          }),
+        });
+      }
+
+      showToast(editMode ? "수정되었습니다. ✏️" : "저장되었습니다. 🌿");
+      await fetchEntries();
+      setView("list");
+      setSelected(null);
+      setEditMode(false);
     } catch {
       showToast("서버 오류가 발생했습니다.", "error");
     }
@@ -188,15 +222,32 @@ export default function App() {
     }
   };
 
-  function openWrite(entry = null) {
+  async function openWrite(entry = null) {
     if (!token) { setShowLogin(true); return; }
-    setSelected(entry || null);
+    let entryWithMedia = entry;
+    // 수정 시 미디어 로드
+    if (entry && (!entry.media || entry.media.length === 0)) {
+      const media = await fetchMedia(entry.id);
+      entryWithMedia = { ...entry, media };
+    }
+    setSelected(entryWithMedia || null);
     setEditMode(!!entry);
     setView("write");
     setTimeout(() => textRef.current?.focus(), 100);
   }
 
-  function openRead(entry) { setSelected(entry); setView("read"); }
+  async function openRead(entry) {
+    setSelected(entry);
+    setView("read");
+    // 미디어가 아직 없으면 lazy 로드
+    if (!entry.media || entry.media.length === 0) {
+      const media = await fetchMedia(entry.id);
+      if (media.length > 0) {
+        setSelected(prev => prev?.id === entry.id ? { ...prev, media } : prev);
+        setEntries(prev => prev.map(e => e.id === entry.id ? { ...e, media } : e));
+      }
+    }
+  }
 
   // ── 필터링 ──
   const filtered = entries.filter(e => {
