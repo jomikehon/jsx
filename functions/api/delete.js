@@ -1,5 +1,6 @@
 // functions/api/delete.js
 // POST /api/delete  { id }  + Header: X-Session-Token
+// [수정] diary_media 테이블도 함께 삭제 (ON DELETE CASCADE 보조)
 
 async function getSessionUser(request, env) {
   const token = request.headers.get("X-Session-Token");
@@ -41,7 +42,11 @@ export async function onRequestPost(context) {
       return new Response(JSON.stringify({ error: "삭제 권한이 없습니다." }), { status: 403 });
     }
 
-    await env.DB.prepare("DELETE FROM diary_entries WHERE id = ?").bind(id).run();
+    // 미디어 먼저 삭제 후 일기 삭제 (FOREIGN KEY PRAGMA가 비활성화된 환경 대비)
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM diary_media WHERE entry_id = ?").bind(id),
+      env.DB.prepare("DELETE FROM diary_entries WHERE id = ?").bind(id),
+    ]);
 
     return new Response(JSON.stringify({ success: true }));
   } catch (e) {
