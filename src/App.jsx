@@ -357,7 +357,7 @@ export default function App() {
         <div style={s.headerInner}>
           <div style={s.logo} onClick={() => { setView("list"); setSelected(null); }}>
             <span>🌿</span>
-            <span style={s.logoText}>나의 하루 일기</span>
+            <span style={s.logoText}>My life is so simple</span>
           </div>
           <div style={s.headerRight}>
             {view !== "list" && <button style={s.btnBack} onClick={() => setView("list")}>← 목록</button>}
