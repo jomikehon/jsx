@@ -40,6 +40,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterMood, setFilterMood] = useState("");
   const [mediaLoading, setMediaLoading] = useState(false);
+  const [lightbox, setLightbox] = useState(null); // { media, index }
   const textRef = useRef(null);
 
   const showToast = (msg, type = "success") => {
@@ -56,6 +57,17 @@ export default function App() {
   }
 
   useEffect(() => { fetchEntries(); }, []);
+
+  // ESC 키로 라이트박스 닫기
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape") setLightbox(null);
+      if (e.key === "ArrowLeft") setLightbox(prev => prev && prev.index > 0 ? { ...prev, index: prev.index - 1 } : prev);
+      if (e.key === "ArrowRight") setLightbox(prev => prev && prev.index < prev.media.filter(m => m.type?.startsWith("image/")).length - 1 ? { ...prev, index: prev.index + 1 } : prev);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   async function fetchEntries() {
     setIsLoading(true);
@@ -352,6 +364,66 @@ export default function App() {
         </div>
       )}
 
+      {/* ── 라이트박스 ── */}
+      {lightbox && (
+        <div
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.92)", zIndex: 800,
+            display: "flex", alignItems: "center", justifyContent: "center" }}
+          onClick={() => setLightbox(null)}
+        >
+          {/* 이전 버튼 */}
+          {lightbox.index > 0 && (
+            <button
+              style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)",
+                background: "rgba(255,255,255,0.15)", border: "none", borderRadius: "50%",
+                width: 48, height: 48, fontSize: 22, color: "#fff", cursor: "pointer", zIndex: 1 }}
+              onClick={e => { e.stopPropagation(); setLightbox(prev => ({ ...prev, index: prev.index - 1 })); }}
+            >‹</button>
+          )}
+
+          {/* 이미지 */}
+          <img
+            src={lightbox.media[lightbox.index].data}
+            alt={lightbox.media[lightbox.index].name}
+            style={{ maxWidth: "90vw", maxHeight: "90vh", objectFit: "contain",
+              borderRadius: 8, boxShadow: "0 8px 40px rgba(0,0,0,0.6)", userSelect: "none" }}
+            onClick={e => e.stopPropagation()}
+          />
+
+          {/* 다음 버튼 */}
+          {lightbox.index < lightbox.media.filter(m => m.type?.startsWith("image/")).length - 1 && (
+            <button
+              style={{ position: "absolute", right: 16, top: "50%", transform: "translateY(-50%)",
+                background: "rgba(255,255,255,0.15)", border: "none", borderRadius: "50%",
+                width: 48, height: 48, fontSize: 22, color: "#fff", cursor: "pointer", zIndex: 1 }}
+              onClick={e => { e.stopPropagation(); setLightbox(prev => ({ ...prev, index: prev.index + 1 })); }}
+            >›</button>
+          )}
+
+          {/* 닫기 버튼 */}
+          <button
+            style={{ position: "absolute", top: 16, right: 16, background: "rgba(255,255,255,0.15)",
+              border: "none", borderRadius: "50%", width: 40, height: 40, fontSize: 18,
+              color: "#fff", cursor: "pointer", zIndex: 1 }}
+            onClick={() => setLightbox(null)}
+          >✕</button>
+
+          {/* 인디케이터 (여러 장일 때) */}
+          {lightbox.media.filter(m => m.type?.startsWith("image/")).length > 1 && (
+            <div style={{ position: "absolute", bottom: 20, left: "50%", transform: "translateX(-50%)",
+              display: "flex", gap: 6 }}>
+              {lightbox.media.filter(m => m.type?.startsWith("image/")).map((_, i) => (
+                <div key={i}
+                  style={{ width: 8, height: 8, borderRadius: "50%", cursor: "pointer",
+                    background: i === lightbox.index ? "#fff" : "rgba(255,255,255,0.35)" }}
+                  onClick={e => { e.stopPropagation(); setLightbox(prev => ({ ...prev, index: i })); }}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── Header ── */}
       <header style={s.header}>
         <div style={s.headerInner}>
@@ -412,7 +484,7 @@ export default function App() {
               Object.entries(grouped).sort((a, b) => b[0].localeCompare(a[0])).map(([month, items]) => (
                 <div key={month}>
                   <div style={s.monthLabel}>
-                    {new Date(month).toLocaleDateString("ko-KR", { year: "numeric", month: "long" })}
+                    {new Date(month + "-01T00:00:00").toLocaleDateString("ko-KR", { year: "numeric", month: "long" })}
                     <span style={s.monthCount}>{items.length}개</span>
                   </div>
                   <div style={s.entryGrid}>
@@ -484,7 +556,9 @@ export default function App() {
                   {selected.media.map((m, idx) => (
                     <div key={idx} style={{ borderRadius: 12, overflow: "hidden", border: `1px solid ${p.border}` }}>
                       {m.type?.startsWith("image/") ? (
-                        <img src={m.data} alt={m.name} style={{ width: "100%", maxHeight: 320, objectFit: "cover", display: "block", cursor: "pointer" }} onClick={() => window.open(m.data, "_blank")} />
+                        <img src={m.data} alt={m.name}
+                          style={{ width: "100%", maxHeight: 320, objectFit: "cover", display: "block", cursor: "zoom-in" }}
+                          onClick={() => setLightbox({ media: selected.media, index: idx })} />
                       ) : (
                         <video src={m.data} style={{ width: "100%", maxHeight: 320 }} controls playsInline />
                       )}
