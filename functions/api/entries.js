@@ -58,8 +58,8 @@ export async function onRequestPost(context) {
         return new Response(JSON.stringify({ error: "수정 권한이 없습니다." }), { status: 403 });
       }
       await env.DB.prepare(
-        "UPDATE diary_entries SET title=?, content=?, mood=?, tags=?, updated_at=CURRENT_TIMESTAMP WHERE id=?"
-      ).bind(title, content, mood, tagsStr, id).run();
+        "UPDATE diary_entries SET date=?, title=?, content=?, mood=?, tags=?, updated_at=CURRENT_TIMESTAMP WHERE id=?"
+      ).bind(date, title, content, mood, tagsStr, id).run();
       return new Response(JSON.stringify({ success: true, message: "수정되었습니다." }));
     } else {
       await env.DB.prepare(

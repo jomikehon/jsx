@@ -5,9 +5,11 @@ const USERNAME_KEY = "diary-username";
 
 function formatDate(dateStr) {
   const d = new Date(dateStr + "T00:00:00");
-  return d.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric", weekday: "long" });
+  return d.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric", weekday: "long", timeZone: "America/New_York" });
 }
-function getTodayStr() { return new Date().toISOString().slice(0, 10); }
+function getTodayStr() {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+}
 function getMoodLabel(m) {
   return { "😊": "기쁨", "😢": "슬픔", "😤": "화남", "😌": "평온", "🤩": "설렘", "😴": "피곤" }[m] || "";
 }
@@ -484,7 +486,7 @@ export default function App() {
               Object.entries(grouped).sort((a, b) => b[0].localeCompare(a[0])).map(([month, items]) => (
                 <div key={month}>
                   <div style={s.monthLabel}>
-                    {new Date(month + "-01T00:00:00").toLocaleDateString("en-US", { year: "numeric", month: "long" })}
+                    {new Date(month + "-01T00:00:00").toLocaleDateString("en-US", { year: "numeric", month: "long", timeZone: "America/New_York" })}
                     <span style={s.monthCount}>{items.length}개</span>
                   </div>
                   <div style={s.entryGrid}>
