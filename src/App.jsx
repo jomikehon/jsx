@@ -476,15 +476,15 @@ export default function App() {
               <div style={s.empty}>
                 <div style={{ fontSize: 56 }}>📖</div>
                 <p style={{ fontSize: 18, color: p.inkLight, fontFamily: "sans-serif" }}>
-                  {entries.length === 0 ? "첫 일기를 써보세요" : "검색 결과가 없어요"}
+                  {entries.length === 0 ? "첫 글을 써보세요" : "검색 결과가 없어요"}
                 </p>
-                {entries.length === 0 && <button style={s.btnPrimary} onClick={() => openWrite()}>오늘 하루 기록하기</button>}
+                {entries.length === 0 && <button style={s.btnPrimary} onClick={() => openWrite()}>기록하기</button>}
               </div>
             ) : (
               Object.entries(grouped).sort((a, b) => b[0].localeCompare(a[0])).map(([month, items]) => (
                 <div key={month}>
                   <div style={s.monthLabel}>
-                    {new Date(month + "-01T00:00:00").toLocaleDateString("ko-KR", { year: "numeric", month: "long" })}
+                    {new Date(month + "-01T00:00:00").toLocaleDateString("en-US", { year: "numeric", month: "long" })}
                     <span style={s.monthCount}>{items.length}개</span>
                   </div>
                   <div style={s.entryGrid}>
@@ -586,7 +586,7 @@ export default function App() {
         )}
       </main>
 
-      <footer style={s.footer}>나의 하루를 기록하는 공간 🌿</footer>
+      <footer style={s.footer}>나의 인생을 기록하는 공간 🌿</footer>
     </div>
   );
 }
@@ -617,7 +617,7 @@ function WriteView({ textRef, editData, editMode, onSave, onCancel }) {
 
   return (
     <div style={s.writeContainer}>
-      <h2 style={s.writeHeading}>{editMode ? "일기 수정" : "새 일기 쓰기"}</h2>
+      <h2 style={s.writeHeading}>{editMode ? "글 수정" : "새 글 쓰기"}</h2>
       <div style={s.writeForm}>
         <div style={s.formRow}>
           <div style={{ flex: 1, minWidth: 200 }}>
@@ -641,7 +641,7 @@ function WriteView({ textRef, editData, editMode, onSave, onCancel }) {
         </div>
         <div style={{ marginBottom: 20 }}>
           <label style={s.label}>내용</label>
-          <textarea ref={textRef} style={s.textarea} placeholder="오늘 있었던 일, 느꼈던 감정을 자유롭게 적어보세요..." value={form.content} onChange={e => setForm({ ...form, content: e.target.value })} rows={14} />
+          <textarea ref={textRef} style={s.textarea} placeholder="있었던 일, 느꼈던 감정을 자유롭게 적어보세요..." value={form.content} onChange={e => setForm({ ...form, content: e.target.value })} rows={14} />
           <div style={{ textAlign: "right", fontSize: 12, color: p.inkMuted, marginTop: 4, fontFamily: "sans-serif" }}>{form.content.length}자</div>
         </div>
         <div style={{ marginBottom: 20 }}>
