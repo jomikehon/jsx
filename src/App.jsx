@@ -387,7 +387,7 @@ export default function App() {
         {view === "list" && (
           <div>
             <div style={s.statsRow}>
-              <div style={s.statCard}><span style={s.statNum}>{entries.length}</span><span style={s.statLabel}>총 일기</span></div>
+              <div style={s.statCard}><span style={s.statNum}>{entries.length}</span><span style={s.statLabel}>총 건</span></div>
               <div style={s.statCard}><span style={s.statNum}>{entries.filter(e => e.date === getTodayStr()).length > 0 ? "✓" : "○"}</span><span style={s.statLabel}>오늘 기록</span></div>
               <div style={s.statCard}><span style={s.statNum}>{[...new Set(entries.map(e => e.date.slice(0, 7)))].length}</span><span style={s.statLabel}>달 수</span></div>
             </div>
@@ -412,7 +412,7 @@ export default function App() {
               Object.entries(grouped).sort((a, b) => b[0].localeCompare(a[0])).map(([month, items]) => (
                 <div key={month}>
                   <div style={s.monthLabel}>
-                    {new Date(month + "-01").toLocaleDateString("ko-KR", { year: "numeric", month: "long" })}
+                    {new Date(month).toLocaleDateString("ko-KR", { year: "numeric", month: "long" })}
                     <span style={s.monthCount}>{items.length}개</span>
                   </div>
                   <div style={s.entryGrid}>
