@@ -433,7 +433,7 @@ export default function App() {
           </div>
           <div style={s.headerRight}>
             {view !== "list" && <button style={s.btnBack} onClick={() => setView("list")}>← 목록</button>}
-            {view === "list" && <button style={s.btnPrimary} onClick={() => openWrite()}>+ 새 일기</button>}
+            {view === "list" && <button style={s.btnPrimary} onClick={() => openWrite()}>+ 새 글</button>}
             {view === "read" && selected && token && (
               <>
                 <button style={s.btnSecondary} onClick={() => openWrite(selected)}>✏️ 수정</button>
