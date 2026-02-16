@@ -5,7 +5,7 @@ const USERNAME_KEY = "diary-username";
 
 function formatDate(dateStr) {
   const d = new Date(dateStr + "T00:00:00");
-  return d.toLocaleDateString("ko-KR", { year: "numeric", month: "long", day: "numeric", weekday: "long" });
+  return d.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric", weekday: "long" });
 }
 function getTodayStr() { return new Date().toISOString().slice(0, 10); }
 function getMoodLabel(m) {
