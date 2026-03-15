@@ -16,16 +16,21 @@ async function getSessionUser(request, env) {
   return session;
 }
 
-// GET /api/entries — 일기 목록 (미디어 미포함, 프론트에서 별도 조회)
+// GET /api/entries — 일기 목록 (댓글 수 포함)
 export async function onRequestGet(context) {
   const { env } = context;
   try {
     const { results } = await env.DB.prepare(
-      "SELECT id, date, title, content, mood, tags, created_at FROM diary_entries ORDER BY date DESC, created_at DESC"
+      `SELECT e.id, e.date, e.title, e.content, e.mood, e.tags, e.created_at,
+              COUNT(c.id) AS comment_count
+       FROM diary_entries e
+       LEFT JOIN diary_comments c ON c.entry_id = e.id
+       GROUP BY e.id
+       ORDER BY e.date DESC, e.created_at DESC`
     ).all();
 
     return new Response(JSON.stringify(
-      results.map(item => ({ ...item, tags: item.tags || "", media: [] }))
+      results.map(item => ({ ...item, tags: item.tags || "", media: [], comment_count: item.comment_count || 0 }))
     ), { headers: { "Content-Type": "application/json" } });
   } catch (e) {
     return new Response(JSON.stringify({ error: e.message }), { status: 500 });

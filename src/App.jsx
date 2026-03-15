@@ -231,6 +231,8 @@ export default function App() {
       if (res.ok) {
         setCommentText("");
         await fetchComments(selected.id);
+        // 카드 댓글 수 +1 갱신
+        setEntries(prev => prev.map(e => e.id === selected.id ? { ...e, comment_count: (e.comment_count || 0) + 1 } : e));
         showToast("댓글이 등록되었습니다. 💬");
       } else {
         let errMsg = "댓글 저장 실패";
@@ -256,6 +258,8 @@ export default function App() {
       });
       if (res.ok) {
         await fetchComments(selected.id);
+        // 카드 댓글 수 -1 갱신
+        setEntries(prev => prev.map(e => e.id === selected.id ? { ...e, comment_count: Math.max(0, (e.comment_count || 1) - 1) } : e));
         showToast("댓글이 삭제되었습니다.");
       } else {
         showToast("댓글 삭제 권한이 없습니다.", "error");
@@ -587,11 +591,16 @@ export default function App() {
                           </div>
                           <h3 style={s.cardTitle}>{entry.title}</h3>
                           <p style={s.cardExcerpt}>{entry.content.slice(0, 80)}{entry.content.length > 80 ? "..." : ""}</p>
-                          {entry.tags && (
-                            <div style={s.cardTags}>
-                              {entry.tags.split(",").map(t => t.trim()).filter(Boolean).map(t => <span key={t} style={s.tag}>#{t}</span>)}
-                            </div>
-                          )}
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
+                            {entry.tags ? (
+                              <div style={s.cardTags}>
+                                {entry.tags.split(",").map(t => t.trim()).filter(Boolean).map(t => <span key={t} style={s.tag}>#{t}</span>)}
+                              </div>
+                            ) : <div />}
+                            {entry.comment_count > 0 && (
+                              <span style={s.cardCommentBadge}>💬 {entry.comment_count}</span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -929,6 +938,7 @@ function makeStyles(p) {
     cardExcerpt: { fontSize: 13, color: p.inkLight, lineHeight: 1.6, margin: "0 0 10px", fontFamily: "sans-serif" },
     cardTags: { display: "flex", flexWrap: "wrap", gap: 4 },
     tag: { fontSize: 11, background: p.accentLight, color: p.accent, padding: "2px 8px", borderRadius: 10, fontWeight: 600, fontFamily: "sans-serif" },
+    cardCommentBadge: { fontSize: 11, color: p.inkMuted, fontFamily: "sans-serif", fontWeight: 600, whiteSpace: "nowrap" },
     empty: { textAlign: "center", padding: "80px 20px", display: "flex", flexDirection: "column", alignItems: "center", gap: 16 },
     writeContainer: { maxWidth: 680, margin: "0 auto" },
     writeHeading: { fontSize: 26, fontWeight: 800, marginBottom: 28, color: p.ink },
