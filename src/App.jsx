@@ -67,8 +67,10 @@ export default function App() {
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [commentText, setCommentText] = useState("");
   const [commentAuthor, setCommentAuthor] = useState(() => localStorage.getItem("diary-comment-author") || "");
+  const [commentPassword, setCommentPassword] = useState("");
   const [commentSubmitting, setCommentSubmitting] = useState(false);
-  const [deleteCommentConfirm, setDeleteCommentConfirm] = useState(null);
+  const [deleteCommentConfirm, setDeleteCommentConfirm] = useState(null); // { comment, password }
+  const [deleteCommentPassword, setDeleteCommentPassword] = useState("");
 
   // ── 번역 상태 ──
   const [translation, setTranslation] = useState(null);   // { title, content }
@@ -215,6 +217,7 @@ export default function App() {
     if (!commentText.trim()) return;
     const authorName = token ? username : commentAuthor.trim();
     if (!authorName) { showToast("닉네임을 입력해주세요.", "error"); return; }
+    if (!token && !commentPassword.trim()) { showToast("비밀번호를 입력해주세요.", "error"); return; }
     if (!token) localStorage.setItem("diary-comment-author", authorName);
     setCommentSubmitting(true);
     try {
@@ -225,13 +228,14 @@ export default function App() {
           entry_id: selected.id,
           content: commentText.trim(),
           author: authorName,
+          password: token ? null : commentPassword.trim(),
           ...(token ? { token } : {}),
         }),
       });
       if (res.ok) {
         setCommentText("");
+        setCommentPassword("");
         await fetchComments(selected.id);
-        // 카드 댓글 수 +1 갱신
         setEntries(prev => prev.map(e => e.id === selected.id ? { ...e, comment_count: (e.comment_count || 0) + 1 } : e));
         showToast("댓글이 등록되었습니다. 💬");
       } else {
@@ -248,21 +252,22 @@ export default function App() {
     }
   }
 
-  async function handleCommentDelete(comment) {
+  async function handleCommentDelete(comment, password) {
     setDeleteCommentConfirm(null);
+    setDeleteCommentPassword("");
     try {
       const res = await fetch("/api/comments", {
         method: "DELETE",
         headers: authHeaders(),
-        body: JSON.stringify({ id: comment.id }),
+        body: JSON.stringify({ id: comment.id, password: password || null }),
       });
       if (res.ok) {
         await fetchComments(selected.id);
-        // 카드 댓글 수 -1 갱신
         setEntries(prev => prev.map(e => e.id === selected.id ? { ...e, comment_count: Math.max(0, (e.comment_count || 1) - 1) } : e));
         showToast("댓글이 삭제되었습니다.");
       } else {
-        showToast("댓글 삭제 권한이 없습니다.", "error");
+        const d = await res.json().catch(() => ({}));
+        showToast(d.error || "삭제 권한이 없습니다.", "error");
       }
     } catch {
       showToast("서버 오류가 발생했습니다.", "error");
@@ -473,10 +478,28 @@ export default function App() {
         <div style={s.overlay}>
           <div style={s.modal}>
             <p style={s.modalTitle}>댓글을 삭제할까요?</p>
-            <p style={s.modalSub}>삭제된 댓글은 복구할 수 없습니다.</p>
+            {!token && (
+              <>
+                <p style={s.modalSub}>작성 시 입력한 비밀번호를 입력해주세요.</p>
+                <input
+                  style={s.modalInput}
+                  type="password"
+                  placeholder="비밀번호"
+                  value={deleteCommentPassword}
+                  onChange={e => setDeleteCommentPassword(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && handleCommentDelete(deleteCommentConfirm, deleteCommentPassword)}
+                  autoFocus
+                />
+              </>
+            )}
+            {token && <p style={s.modalSub}>삭제된 댓글은 복구할 수 없습니다.</p>}
             <div style={s.modalActions}>
-              <button style={s.btnGhost} onClick={() => setDeleteCommentConfirm(null)}>취소</button>
-              <button style={s.btnDanger} onClick={() => handleCommentDelete(deleteCommentConfirm)}>삭제</button>
+              <button style={s.btnGhost} onClick={() => { setDeleteCommentConfirm(null); setDeleteCommentPassword(""); }}>취소</button>
+              <button
+                style={{ ...s.btnDanger, opacity: (!token && !deleteCommentPassword.trim()) ? 0.5 : 1 }}
+                disabled={!token && !deleteCommentPassword.trim()}
+                onClick={() => handleCommentDelete(deleteCommentConfirm, deleteCommentPassword)}
+              >삭제</button>
             </div>
           </div>
         </div>
@@ -705,7 +728,7 @@ export default function App() {
               </h3>
 
               <div style={s.commentInputWrap}>
-                {/* 닉네임 행: 로그인 시 자동, 비로그인 시 입력 */}
+                {/* 닉네임 + 비밀번호 행 */}
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
                   <span style={s.commentAvatar}>
                     {token ? username[0]?.toUpperCase() : (commentAuthor.trim()[0]?.toUpperCase() || "?")}
@@ -713,13 +736,23 @@ export default function App() {
                   {token ? (
                     <span style={{ fontSize: 13, fontWeight: 700, color: p.accent, fontFamily: "sans-serif" }}>{username}</span>
                   ) : (
-                    <input
-                      style={{ ...s.commentNicknameInput }}
-                      placeholder="닉네임 (필수)"
-                      value={commentAuthor}
-                      onChange={e => setCommentAuthor(e.target.value)}
-                      maxLength={20}
-                    />
+                    <>
+                      <input
+                        style={s.commentNicknameInput}
+                        placeholder="닉네임 (필수)"
+                        value={commentAuthor}
+                        onChange={e => setCommentAuthor(e.target.value)}
+                        maxLength={20}
+                      />
+                      <input
+                        style={{ ...s.commentNicknameInput, maxWidth: 120 }}
+                        type="password"
+                        placeholder="비밀번호 (필수)"
+                        value={commentPassword}
+                        onChange={e => setCommentPassword(e.target.value)}
+                        maxLength={20}
+                      />
+                    </>
                   )}
                 </div>
                 <textarea
@@ -733,9 +766,9 @@ export default function App() {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
                   <span style={{ fontSize: 11, color: p.inkMuted, fontFamily: "sans-serif" }}>Ctrl+Enter로 등록</span>
                   <button
-                    style={{ ...s.btnPrimary, opacity: (commentSubmitting || !commentText.trim() || (!token && !commentAuthor.trim())) ? 0.5 : 1 }}
+                    style={{ ...s.btnPrimary, opacity: (commentSubmitting || !commentText.trim() || (!token && (!commentAuthor.trim() || !commentPassword.trim()))) ? 0.5 : 1 }}
                     onClick={handleCommentSubmit}
-                    disabled={commentSubmitting || !commentText.trim() || (!token && !commentAuthor.trim())}
+                    disabled={commentSubmitting || !commentText.trim() || (!token && (!commentAuthor.trim() || !commentPassword.trim()))}
                   >
                     {commentSubmitting ? "등록 중..." : "등록"}
                   </button>
@@ -762,11 +795,9 @@ export default function App() {
                             </span>
                           </div>
                         </div>
-                        {/* 로그인 사용자는 본인 댓글 삭제, 관리자(토큰 있음)는 모든 댓글 삭제 가능 */}
-                        {token && (
-                          <button style={{ background: "transparent", border: "none", color: p.inkMuted, cursor: "pointer", fontSize: 12, padding: "2px 6px", fontFamily: "sans-serif" }}
-                            onClick={() => setDeleteCommentConfirm(c)}>삭제</button>
-                        )}
+                        {/* 로그인 사용자: 바로 삭제 / 비로그인: 비밀번호 확인 후 삭제 */}
+                        <button style={{ background: "transparent", border: "none", color: p.inkMuted, cursor: "pointer", fontSize: 12, padding: "2px 6px", fontFamily: "sans-serif" }}
+                          onClick={() => { setDeleteCommentConfirm(c); setDeleteCommentPassword(""); }}>삭제</button>
                       </div>
                       <p style={{ margin: "8px 0 0 36px", fontSize: 14, lineHeight: 1.7, color: p.ink, fontFamily: "sans-serif" }}>
                         {c.content}
