@@ -59,3 +59,23 @@ CREATE TABLE IF NOT EXISTS diary_media (
 --   Node:    require('crypto').createHash('sha256').update('your_password').digest('hex')
 -- ============================================================
 -- INSERT INTO users (username, password_hash) VALUES ('admin', '<SHA256_HASH_HERE>');
+
+-- 5. 댓글 테이블 (비로그인 익명 댓글 지원)
+--    author: 닉네임 (비로그인 시 직접 입력, 로그인 시 username 사용)
+--    user_id: 로그인 사용자면 채워짐, 비로그인이면 NULL
+CREATE TABLE IF NOT EXISTS diary_comments (
+  id         TEXT PRIMARY KEY,
+  entry_id   TEXT NOT NULL,
+  user_id    INTEGER,               -- NULL 허용 (비로그인 댓글)
+  author     TEXT NOT NULL DEFAULT '익명',
+  content    TEXT NOT NULL,
+  created_at TEXT DEFAULT (datetime('now')),
+  FOREIGN KEY (entry_id) REFERENCES diary_entries(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_comments_entry_id ON diary_comments(entry_id);
+
+-- [마이그레이션] 기존 diary_comments 테이블이 이미 있다면 아래 두 줄만 실행:
+-- ALTER TABLE diary_comments ADD COLUMN author TEXT NOT NULL DEFAULT '익명';
+-- UPDATE diary_comments SET user_id = NULL WHERE user_id IS NOT NULL AND user_id NOT IN (SELECT id FROM users);
