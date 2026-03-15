@@ -122,7 +122,7 @@ export default function App() {
     return [];
   }
 
-  // ── 번역 (MyMemory 무료 API — 500자 청크 분할) ──
+  // ── 번역 (MyMemory 무료 API — 인코딩 길이 기준 청크 분할) ──
   async function translateChunk(text) {
     const res = await fetch(
       `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=ko|en`
@@ -133,32 +133,40 @@ export default function App() {
     return data.responseData.translatedText;
   }
 
-  function splitIntoChunks(text, maxLen = 480) {
+  function splitIntoChunks(text, maxEncoded = 450) {
     const chunks = [];
-    // 문단 단위로 먼저 나누고, 문단이 maxLen 초과하면 다시 분할
-    const paragraphs = text.split("\n");
+    // 문장 단위로 분리 (마침표, 줄바꿈 기준)
+    const sentences = text.split(/(?<=\.|\n)/);
     let current = "";
-    for (const para of paragraphs) {
-      if ((current + "\n" + para).length > maxLen && current) {
-        chunks.push(current.trim());
-        current = para;
+    for (const sentence of sentences) {
+      const candidate = current + sentence;
+      if (encodeURIComponent(candidate).length > maxEncoded && current) {
+        chunks.push(current);
+        current = sentence;
       } else {
-        current = current ? current + "\n" + para : para;
+        current = candidate;
       }
     }
-    if (current.trim()) chunks.push(current.trim());
-    // 개별 문단이 maxLen 초과하면 강제 분할
+    if (current) chunks.push(current);
+    // 단일 문장이 여전히 초과하면 글자 수로 강제 분할
     const result = [];
     for (const chunk of chunks) {
-      if (chunk.length <= maxLen) {
+      if (encodeURIComponent(chunk).length <= maxEncoded) {
         result.push(chunk);
       } else {
-        for (let i = 0; i < chunk.length; i += maxLen) {
-          result.push(chunk.slice(i, i + maxLen));
+        let buf = "";
+        for (const char of chunk) {
+          if (encodeURIComponent(buf + char).length > maxEncoded) {
+            if (buf) result.push(buf);
+            buf = char;
+          } else {
+            buf += char;
+          }
         }
+        if (buf) result.push(buf);
       }
     }
-    return result;
+    return result.filter(c => c.trim());
   }
 
   async function handleTranslate() {
@@ -167,18 +175,16 @@ export default function App() {
     setTranslating(true);
     setShowTranslation(true);
     try {
-      // 제목 번역
-      const translatedTitle = await translateChunk(selected.title.slice(0, 480));
-      // 본문 청크 분할 번역
-      const chunks = splitIntoChunks(selected.content);
-      const translatedChunks = [];
-      for (const chunk of chunks) {
-        const t = await translateChunk(chunk);
-        translatedChunks.push(t);
+      const titleChunks = splitIntoChunks(selected.title);
+      const translatedTitle = (await Promise.all(titleChunks.map(translateChunk))).join(" ");
+      const bodyChunks = splitIntoChunks(selected.content);
+      const translatedParts = [];
+      for (const chunk of bodyChunks) {
+        translatedParts.push(await translateChunk(chunk));
       }
       setTranslation({
         title: translatedTitle.trim(),
-        content: translatedChunks.join("\n"),
+        content: translatedParts.join(" "),
       });
     } catch (err) {
       console.error("번역 오류:", err);
