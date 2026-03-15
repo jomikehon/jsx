@@ -122,30 +122,39 @@ export default function App() {
     return [];
   }
 
-  // ── 번역 (Claude API) ──
+  // ── 번역 (MyMemory 무료 API — 브라우저 직접 호출) ──
   async function handleTranslate() {
     if (!selected) return;
     if (translation) { setShowTranslation(t => !t); return; }
     setTranslating(true);
     setShowTranslation(true);
     try {
-      const prompt = `Translate the following Korean diary entry into natural, fluent English. Return ONLY a JSON object with two fields: "title" and "content". Do not add any explanation or extra text.\n\nTitle: ${selected.title}\n\nContent:\n${selected.content}`;
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          messages: [{ role: "user", content: prompt }],
-        }),
-      });
+      // 제목 + 본문을 합쳐서 한 번에 번역 (구분자로 분리)
+      const SEPARATOR = " ||| ";
+      const combined = selected.title + SEPARATOR + selected.content;
+      const encoded = encodeURIComponent(combined);
+      const res = await fetch(
+        `https://api.mymemory.translated.net/get?q=${encoded}&langpair=ko|en`
+      );
+      if (!res.ok) throw new Error("네트워크 오류");
       const data = await res.json();
-      const raw = data.content?.[0]?.text || "";
-      const clean = raw.replace(/```json|```/g, "").trim();
-      const parsed = JSON.parse(clean);
-      setTranslation(parsed);
-    } catch {
-      showToast("번역에 실패했습니다.", "error");
+      if (data.responseStatus !== 200) {
+        throw new Error(data.responseDetails || "번역 오류");
+      }
+      const translatedText = data.responseData.translatedText;
+      const sepIdx = translatedText.indexOf(SEPARATOR);
+      if (sepIdx !== -1) {
+        setTranslation({
+          title: translatedText.slice(0, sepIdx).trim(),
+          content: translatedText.slice(sepIdx + SEPARATOR.length).trim(),
+        });
+      } else {
+        // 구분자 못 찾으면 전체를 본문으로
+        setTranslation({ title: selected.title, content: translatedText.trim() });
+      }
+    } catch (err) {
+      console.error("번역 오류:", err);
+      showToast("번역에 실패했습니다: " + err.message, "error");
       setShowTranslation(false);
     } finally {
       setTranslating(false);
@@ -170,10 +179,8 @@ export default function App() {
 
   async function handleCommentSubmit() {
     if (!commentText.trim()) return;
-    // 로그인 안 했을 때 닉네임 필수
     const authorName = token ? username : commentAuthor.trim();
     if (!authorName) { showToast("닉네임을 입력해주세요.", "error"); return; }
-    // 닉네임 localStorage 저장 (비로그인 사용자 편의)
     if (!token) localStorage.setItem("diary-comment-author", authorName);
     setCommentSubmitting(true);
     try {
@@ -184,7 +191,6 @@ export default function App() {
           entry_id: selected.id,
           content: commentText.trim(),
           author: authorName,
-          // 로그인 사용자는 토큰도 함께 전송 (서버에서 user_id 매핑)
           ...(token ? { token } : {}),
         }),
       });
@@ -193,11 +199,14 @@ export default function App() {
         await fetchComments(selected.id);
         showToast("댓글이 등록되었습니다. 💬");
       } else {
-        const d = await res.json();
-        showToast(d.error || "댓글 저장 실패", "error");
+        let errMsg = "댓글 저장 실패";
+        try { const d = await res.json(); errMsg = d.error || errMsg; } catch {}
+        console.error("댓글 POST 실패:", res.status, errMsg);
+        showToast(errMsg, "error");
       }
-    } catch {
-      showToast("서버 오류가 발생했습니다.", "error");
+    } catch (err) {
+      console.error("댓글 fetch 오류:", err);
+      showToast("서버에 연결할 수 없습니다.", "error");
     } finally {
       setCommentSubmitting(false);
     }
