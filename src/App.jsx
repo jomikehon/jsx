@@ -122,36 +122,64 @@ export default function App() {
     return [];
   }
 
-  // ── 번역 (MyMemory 무료 API — 브라우저 직접 호출) ──
+  // ── 번역 (MyMemory 무료 API — 500자 청크 분할) ──
+  async function translateChunk(text) {
+    const res = await fetch(
+      `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=ko|en`
+    );
+    if (!res.ok) throw new Error("네트워크 오류");
+    const data = await res.json();
+    if (data.responseStatus !== 200) throw new Error(data.responseDetails || "번역 오류");
+    return data.responseData.translatedText;
+  }
+
+  function splitIntoChunks(text, maxLen = 480) {
+    const chunks = [];
+    // 문단 단위로 먼저 나누고, 문단이 maxLen 초과하면 다시 분할
+    const paragraphs = text.split("\n");
+    let current = "";
+    for (const para of paragraphs) {
+      if ((current + "\n" + para).length > maxLen && current) {
+        chunks.push(current.trim());
+        current = para;
+      } else {
+        current = current ? current + "\n" + para : para;
+      }
+    }
+    if (current.trim()) chunks.push(current.trim());
+    // 개별 문단이 maxLen 초과하면 강제 분할
+    const result = [];
+    for (const chunk of chunks) {
+      if (chunk.length <= maxLen) {
+        result.push(chunk);
+      } else {
+        for (let i = 0; i < chunk.length; i += maxLen) {
+          result.push(chunk.slice(i, i + maxLen));
+        }
+      }
+    }
+    return result;
+  }
+
   async function handleTranslate() {
     if (!selected) return;
     if (translation) { setShowTranslation(t => !t); return; }
     setTranslating(true);
     setShowTranslation(true);
     try {
-      // 제목 + 본문을 합쳐서 한 번에 번역 (구분자로 분리)
-      const SEPARATOR = " ||| ";
-      const combined = selected.title + SEPARATOR + selected.content;
-      const encoded = encodeURIComponent(combined);
-      const res = await fetch(
-        `https://api.mymemory.translated.net/get?q=${encoded}&langpair=ko|en`
-      );
-      if (!res.ok) throw new Error("네트워크 오류");
-      const data = await res.json();
-      if (data.responseStatus !== 200) {
-        throw new Error(data.responseDetails || "번역 오류");
+      // 제목 번역
+      const translatedTitle = await translateChunk(selected.title.slice(0, 480));
+      // 본문 청크 분할 번역
+      const chunks = splitIntoChunks(selected.content);
+      const translatedChunks = [];
+      for (const chunk of chunks) {
+        const t = await translateChunk(chunk);
+        translatedChunks.push(t);
       }
-      const translatedText = data.responseData.translatedText;
-      const sepIdx = translatedText.indexOf(SEPARATOR);
-      if (sepIdx !== -1) {
-        setTranslation({
-          title: translatedText.slice(0, sepIdx).trim(),
-          content: translatedText.slice(sepIdx + SEPARATOR.length).trim(),
-        });
-      } else {
-        // 구분자 못 찾으면 전체를 본문으로
-        setTranslation({ title: selected.title, content: translatedText.trim() });
-      }
+      setTranslation({
+        title: translatedTitle.trim(),
+        content: translatedChunks.join("\n"),
+      });
     } catch (err) {
       console.error("번역 오류:", err);
       showToast("번역에 실패했습니다: " + err.message, "error");
